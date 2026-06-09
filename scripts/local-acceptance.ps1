@@ -113,6 +113,7 @@ Remove-Item -LiteralPath $parserPath -Force -ErrorAction SilentlyContinue
 
 foreach ($jsFile in @(
   ".\scripts\browser-smoke-runner.js",
+  ".\frontend\js\i18n.js",
   ".\frontend\js\api.js",
   ".\frontend\js\polling.js",
   ".\frontend\js\settings.js",

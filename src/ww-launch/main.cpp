@@ -1,5 +1,6 @@
 #include <winsock2.h>
 #include <windows.h>
+#include <iphlpapi.h>
 #include <shellapi.h>
 #include <wlanapi.h>
 
@@ -259,12 +260,77 @@ static char* currentSsid() {
     return ssid;
 }
 
+struct CurrentNetwork {
+    char* type;
+    char* id;
+};
+
+static void freeNetwork(CurrentNetwork* network) {
+    if (!network) return;
+    freeStr(network->type);
+    freeStr(network->id);
+    network->type = nullptr;
+    network->id = nullptr;
+}
+
+static CurrentNetwork currentNetwork() {
+    CurrentNetwork network{};
+    wchar_t* testType = envWide(L"WW_TEST_CURRENT_NETWORK_TYPE");
+    wchar_t* testId = envWide(L"WW_TEST_CURRENT_NETWORK_ID");
+    if ((testType && testType[0]) || (testId && testId[0])) {
+        network.type = (testType && testType[0]) ? wideToUtf8(testType) : dupRange("wired", 5);
+        bool disconnected = !testId || !testId[0] || wcscmp(testId, L"<no-adapter>") == 0 || wcscmp(testId, L"<disconnected>") == 0;
+        network.id = disconnected ? dupRange("", 0) : wideToUtf8(testId);
+        free(testType);
+        free(testId);
+        return network;
+    }
+    free(testType);
+    free(testId);
+
+    char* ssid = currentSsid();
+    if (ssid && ssid[0]) {
+        network.type = dupRange("wifi", 4);
+        network.id = ssid;
+        return network;
+    }
+    freeStr(ssid);
+
+    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG size = 16 * 1024;
+    IP_ADAPTER_ADDRESSES* addresses = static_cast<IP_ADAPTER_ADDRESSES*>(malloc(size));
+    if (!addresses) {
+        network.type = dupRange("", 0);
+        network.id = dupRange("", 0);
+        return network;
+    }
+    ULONG result = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, addresses, &size);
+    if (result == ERROR_BUFFER_OVERFLOW) {
+        free(addresses);
+        addresses = static_cast<IP_ADAPTER_ADDRESSES*>(malloc(size));
+        result = addresses ? GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, addresses, &size) : ERROR_NOT_ENOUGH_MEMORY;
+    }
+    if (result == NO_ERROR) {
+        for (IP_ADAPTER_ADDRESSES* item = addresses; item; item = item->Next) {
+            if (item->IfType != IF_TYPE_ETHERNET_CSMACD) continue;
+            if (item->OperStatus != IfOperStatusUp || !item->FirstUnicastAddress) continue;
+            network.type = dupRange("wired", 5);
+            network.id = item->FriendlyName ? wideToUtf8(item->FriendlyName) : dupRange(item->AdapterName ? item->AdapterName : "", strlen(item->AdapterName ? item->AdapterName : ""));
+            break;
+        }
+    }
+    free(addresses);
+    if (!network.type) network.type = dupRange("", 0);
+    if (!network.id) network.id = dupRange("", 0);
+    return network;
+}
+
 struct Match {
     char* ruleId;
     char* appName;
 };
 
-static bool ruleBlocks(const char* config, size_t len, const char* ssid, const char* appPath, const char* requestedRule, Match* match) {
+static bool ruleBlocks(const char* config, size_t len, const char* networkType, const char* networkId, const char* appPath, const char* requestedRule, Match* match) {
     size_t rulesBegin = 0;
     size_t rulesEnd = 0;
     if (!arrayBounds(config, len, "rules", 0, len, &rulesBegin, &rulesEnd)) return false;
@@ -281,7 +347,19 @@ static bool ruleBlocks(const char* config, size_t len, const char* ssid, const c
 
         char* ruleId = jsonString(config, len, "id", objectBegin, objectEnd);
         char* ruleSsid = jsonString(config, len, "ssid", objectBegin, objectEnd);
-        bool ruleMatches = (!requestedRule || !requestedRule[0] || strcmp(ruleId, requestedRule) == 0) && strcmp(ruleSsid, ssid) == 0;
+        char* ruleNetworkType = jsonString(config, len, "network_type", objectBegin, objectEnd);
+        char* ruleNetworkId = jsonString(config, len, "network_id", objectBegin, objectEnd);
+        if (!ruleNetworkType || !ruleNetworkType[0]) {
+            freeStr(ruleNetworkType);
+            ruleNetworkType = dupRange("wifi", 4);
+        }
+        if (!ruleNetworkId || !ruleNetworkId[0]) {
+            freeStr(ruleNetworkId);
+            ruleNetworkId = dupRange(ruleSsid, strlen(ruleSsid));
+        }
+        bool ruleMatches = (!requestedRule || !requestedRule[0] || strcmp(ruleId, requestedRule) == 0)
+            && strcmp(ruleNetworkType, networkType) == 0
+            && strcmp(ruleNetworkId, networkId) == 0;
         if (ruleMatches) {
             size_t appsBegin = 0;
             size_t appsEnd = 0;
@@ -308,6 +386,8 @@ static bool ruleBlocks(const char* config, size_t len, const char* ssid, const c
         }
         freeStr(ruleId);
         freeStr(ruleSsid);
+        freeStr(ruleNetworkType);
+        freeStr(ruleNetworkId);
         pos = objectEnd + 1;
     }
     freeStr(appLower);
@@ -417,7 +497,7 @@ static void timestamp(char* out, size_t cap, bool dateOnly) {
     else snprintf(out, cap, "%04u-%02u-%02uT%02u:%02u:%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
 }
 
-static void logBlocked(const char* ssid, const char* app, const char* ruleId) {
+static void logBlocked(const char* networkId, const char* app, const char* ruleId) {
     wchar_t* appData = envWide(L"APPDATA");
     wchar_t* root = appData ? joinWide3(appData, L"\\WiFiWarning", L"") : joinWide3(L".", L"\\WiFiWarning", L"");
     if (appData) free(appData);
@@ -449,7 +529,7 @@ static void logBlocked(const char* ssid, const char* app, const char* ruleId) {
     appendText(line, sizeof(line), &used, "\",\"rule_id\":\"");
     appendJsonEscaped(line, sizeof(line), &used, ruleId);
     appendText(line, sizeof(line), &used, "\",\"ssid\":\"");
-    appendJsonEscaped(line, sizeof(line), &used, ssid);
+    appendJsonEscaped(line, sizeof(line), &used, networkId);
     appendText(line, sizeof(line), &used, "\",\"timestamp\":\"");
     appendText(line, sizeof(line), &used, now);
     appendText(line, sizeof(line), &used, "\"}\n");
@@ -481,20 +561,22 @@ static char* urlEncode(const char* value) {
     return out;
 }
 
-static char* makeWarningUrl(int port, const char* appPath, const char* appName, const char* appArgs, const char* ssid, const char* ruleId) {
+static char* makeWarningUrl(int port, const char* appPath, const char* appName, const char* appArgs, const char* networkType, const char* networkId, const char* ruleId) {
     char* eApp = urlEncode(appPath);
     char* eName = urlEncode(appName);
     char* eArgs = urlEncode(appArgs ? appArgs : "");
-    char* eSsid = urlEncode(ssid);
+    char* eType = urlEncode(networkType);
+    char* eSsid = urlEncode(networkId);
     char* eRule = urlEncode(ruleId);
-    size_t needed = strlen(eApp) + strlen(eName) + strlen(eArgs) + strlen(eSsid) + strlen(eRule) + 180;
+    size_t needed = strlen(eApp) + strlen(eName) + strlen(eArgs) + strlen(eType) + strlen(eSsid) + strlen(eRule) + 210;
     char* out = static_cast<char*>(malloc(needed));
     if (out) {
-        snprintf(out, needed, "http://localhost:%d/warning?app=%s&appName=%s&appArgs=%s&ssid=%s&ruleId=%s", port, eApp, eName, eArgs, eSsid, eRule);
+        snprintf(out, needed, "http://localhost:%d/warning?app=%s&appName=%s&appArgs=%s&networkType=%s&ssid=%s&networkId=%s&ruleId=%s", port, eApp, eName, eArgs, eType, eSsid, eSsid, eRule);
     }
     freeStr(eApp);
     freeStr(eName);
     freeStr(eArgs);
+    freeStr(eType);
     freeStr(eSsid);
     freeStr(eRule);
     return out;
@@ -507,15 +589,17 @@ static void printDryAllow(const char* reason, const char* ssid = nullptr) {
     writeStdout(out);
 }
 
-static void printDryBlock(const char* ruleId, const char* appName, const char* ssid, const char* url) {
+static void printDryBlock(const char* ruleId, const char* appName, const char* networkType, const char* networkId, const char* url) {
     char out[4096]{};
     size_t used = 0;
     appendText(out, sizeof(out), &used, "{\"decision\":\"block\",\"reason\":\"matching_rule\",\"rule_id\":\"");
     appendJsonEscaped(out, sizeof(out), &used, ruleId);
     appendText(out, sizeof(out), &used, "\",\"app\":\"");
     appendJsonEscaped(out, sizeof(out), &used, appName);
+    appendText(out, sizeof(out), &used, "\",\"network_type\":\"");
+    appendJsonEscaped(out, sizeof(out), &used, networkType);
     appendText(out, sizeof(out), &used, "\",\"ssid\":\"");
-    appendJsonEscaped(out, sizeof(out), &used, ssid);
+    appendJsonEscaped(out, sizeof(out), &used, networkId);
     appendText(out, sizeof(out), &used, "\",\"url\":\"");
     appendJsonEscaped(out, sizeof(out), &used, url);
     appendText(out, sizeof(out), &used, "\"}\n");
@@ -533,6 +617,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         ruleId = argValue(argc, argv, L"--rule-id");
     }
     char* overrideSsid = argValue(argc, argv, L"--ssid");
+    char* overrideNetworkType = argValue(argc, argv, L"--network-type");
+    char* overrideNetworkId = argValue(argc, argv, L"--network-id");
     char* configOverride = argValue(argc, argv, L"--config");
     bool dryRun = hasArg(argc, argv, L"--dry-run");
     bool noLaunch = hasArg(argc, argv, L"--no-launch");
@@ -545,6 +631,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         freeStr(appArgs);
         freeStr(ruleId);
         freeStr(overrideSsid);
+        freeStr(overrideNetworkType);
+        freeStr(overrideNetworkId);
         freeStr(configOverride);
         return 2;
     }
@@ -562,47 +650,62 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         freeStr(appArgs);
         freeStr(ruleId);
         freeStr(overrideSsid);
+        freeStr(overrideNetworkType);
+        freeStr(overrideNetworkId);
         freeStr(configOverride);
         return 0;
     }
 
-    char* ssid = (overrideSsid && overrideSsid[0]) ? dupRange(overrideSsid, strlen(overrideSsid)) : currentSsid();
-    if (!ssid || !ssid[0]) {
+    CurrentNetwork network{};
+    if (overrideNetworkId && overrideNetworkId[0]) {
+        network.type = (overrideNetworkType && overrideNetworkType[0]) ? dupRange(overrideNetworkType, strlen(overrideNetworkType)) : dupRange("wired", 5);
+        network.id = dupRange(overrideNetworkId, strlen(overrideNetworkId));
+    } else if (overrideSsid && overrideSsid[0]) {
+        network.type = dupRange("wifi", 4);
+        network.id = dupRange(overrideSsid, strlen(overrideSsid));
+    } else {
+        network = currentNetwork();
+    }
+    if (!network.id || !network.id[0]) {
         if (!dryRun && !noLaunch) shellOpenWithArgs(appPath, appArgs);
         if (dryRun) printDryAllow("no_wifi");
-        freeStr(ssid);
+        freeNetwork(&network);
         freeStr(config);
         freeStr(appPath);
         freeStr(appArgs);
         freeStr(ruleId);
         freeStr(overrideSsid);
+        freeStr(overrideNetworkType);
+        freeStr(overrideNetworkId);
         freeStr(configOverride);
         return 0;
     }
 
     Match match{};
-    if (!ruleBlocks(config, configLen, ssid, appPath, ruleId, &match)) {
+    if (!ruleBlocks(config, configLen, network.type, network.id, appPath, ruleId, &match)) {
         if (!dryRun && !noLaunch) shellOpenWithArgs(appPath, appArgs);
-        if (dryRun) printDryAllow("no_matching_rule", ssid);
-        freeStr(ssid);
+        if (dryRun) printDryAllow("no_matching_rule", network.id);
+        freeNetwork(&network);
         freeStr(config);
         freeStr(appPath);
         freeStr(appArgs);
         freeStr(ruleId);
         freeStr(overrideSsid);
+        freeStr(overrideNetworkType);
+        freeStr(overrideNetworkId);
         freeStr(configOverride);
         return 0;
     }
 
-    if (!dryRun) logBlocked(ssid, appPath, match.ruleId);
+    if (!dryRun) logBlocked(network.id, appPath, match.ruleId);
     int port = jsonInt(config, configLen, "http_port", 18765);
     if (port <= 0) port = 18765;
 
     const char* appName = (match.appName && match.appName[0]) ? match.appName : baseName(appPath);
-    char* url = makeWarningUrl(port, appPath, appName, appArgs, ssid, match.ruleId);
+    char* url = makeWarningUrl(port, appPath, appName, appArgs, network.type, network.id, match.ruleId);
 
     if (dryRun) {
-        printDryBlock(match.ruleId, appName, ssid, url ? url : "");
+        printDryBlock(match.ruleId, appName, network.type, network.id, url ? url : "");
     } else if (url && httpAlive(port)) {
         if (!shellOpen(url)) {
             showFallbackWarning(true);
@@ -616,12 +719,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     freeStr(url);
     freeStr(match.ruleId);
     freeStr(match.appName);
-    freeStr(ssid);
+    freeNetwork(&network);
     freeStr(config);
     freeStr(appPath);
     freeStr(appArgs);
     freeStr(ruleId);
     freeStr(overrideSsid);
+    freeStr(overrideNetworkType);
+    freeStr(overrideNetworkId);
     freeStr(configOverride);
     return 0;
 }

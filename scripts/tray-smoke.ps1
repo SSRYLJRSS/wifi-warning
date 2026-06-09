@@ -21,7 +21,7 @@ Set-Content -LiteralPath $shortcutPath -Encoding ASCII -Value "replacement"
 Set-Content -LiteralPath $backupPath -Encoding ASCII -Value "original"
 
 $config = @{
-  version = "1.0.0"
+  version = "1.5.0"
   settings = @{
     auto_start = $false
     protection_enabled = $true
@@ -36,6 +36,9 @@ $config = @{
     @{
       id = "tray_rule"
       ssid = "Office-WiFi"
+      network_type = "wifi"
+      network_id = "Office-WiFi"
+      network_name = "Office-WiFi"
       safe_wifi_ssid = ""
       safe_wifi_password = ""
       description = "tray smoke"

@@ -1,44 +1,45 @@
 # WiFi 提醒 / WiFi Warning
 
-语言 / Language: [简体中文](#zh-cn) | [English](#english)
+Language: [简体中文](#zh-cn) | [English](#english)
 
 <a id="zh-cn"></a>
 
 ## 简体中文
 
-WiFi 提醒是一款 Windows 托盘小工具。你可以指定某些 WiFi 和某些软件快捷方式；当电脑连着这些 WiFi 时，点击被管控的快捷方式会先打开提醒页，而不是立刻启动软件。
+WiFi 提醒是一款 Windows 桌面托盘工具。你可以按网络设置规则：连接到某个 WiFi 或有线网络时，点击被管控的快捷方式会先打开提醒页，而不是立刻启动软件。
 
-它适合用来管住一些容易分心或者被監管的软件。比如在学校、办公室或图书馆 WiFi 下，打开游戏、视频、聊天、網絡代理软件前，先让自己停一下。
+它适合用来管住容易分心或需要被管控的软件，比如游戏、视频、聊天工具、网络代理工具。规则只改快捷方式，不改软件本体；快捷方式的名称、图标和位置保持不变。
 
 ![设置页截图](docs/screenshots/settings-desktop.png)
 
-### 主要功能
+### 功能
 
-- 按 WiFi 生效：只在你指定的 WiFi 下触发提醒。
-- 按软件组管理：先建软件组，再把要管控的快捷方式放进组里。
-- 不改软件本体：只替换 `.lnk` 快捷方式的启动目标。
-- 外观不变：快捷方式的名称、图标、位置保持原样。
-- 一键还原：可以把已替换的快捷方式恢复回原来的启动方式。
-- 绿色便携：不用安装，解压后直接运行。
-- 本地运行：设置页只在本机打开，配置和日志保存在当前 Windows 用户目录。
+- 支持 WiFi 和有线网络规则。
+- 有线网络支持一键断开和一键恢复。
+- 软件组单独管理，先建组，再把要管控的 `.lnk` 快捷方式放进去。
+- 替换快捷方式后，名称、图标和位置保持原样。
+- 提醒页支持切换安全 WiFi、断开有线网络、输入密码允许本次启动。
+- 中英文界面切换：点击 **简体中文** 或 **English** 即可切换。
+- 绿色便携包：解压即用，不需要安装 Node.js、Python、CMake 或其他开发环境。
+- 本地运行：设置页只在 `localhost` 打开，配置和日志保存在当前 Windows 用户目录。
 
-### 下载和运行
+### 下载
 
 下载绿色便携包：
 
-[下载最新版 WiFiWarning-portable.zip](https://github.com/SSRYLJRSS/wifi-warning/releases/latest)
+[最新版 WiFiWarning-portable.zip](https://github.com/SSRYLJRSS/wifi-warning/releases/latest)
 
-仓库里也保留了一份同样的包：
+仓库里也会保留一份同名包：
 
 [release/WiFiWarning-portable.zip](release/WiFiWarning-portable.zip)
 
-普通使用不需要安装 Node.js、CMake、Python 或其他开发环境。下载 zip，解压，然后运行：
+普通使用只需要下载 zip 并解压，然后运行：
 
 ```powershell
 .\wifi-warning.exe
 ```
 
-如果想让它直接后台启动：
+后台启动：
 
 ```powershell
 .\start-minimized.cmd
@@ -60,9 +61,9 @@ WiFi 提醒是一款 Windows 托盘小工具。你可以指定某些 WiFi 和某
 
 ![提醒页截图](docs/screenshots/warning-desktop.png)
 
-#### WiFi 选择页
+#### 网络选择页
 
-![WiFi 选择页截图](docs/screenshots/wifi-picker-desktop.png)
+![网络选择页截图](docs/screenshots/wifi-picker-desktop.png)
 
 ### 使用教程
 
@@ -80,35 +81,36 @@ http://localhost:18765/settings
 
 在左侧点击 **软件组**。
 
-点击 **新建软件组**，填写名称，然后点 **选择快捷方式**。这一步会调用 Windows 文件选择器，你只需要选中想管控的 `.lnk` 快捷方式。
+点击 **新建软件组**，填写名称，然后点 **选择快捷方式**。这一步会调用 Windows 文件选择器，只需要选中想管控的 `.lnk` 快捷方式。
 
-程序会记录这些快捷方式原来指向哪个软件。后面规则生效时，桌面或开始菜单里的快捷方式看起来不会变，只是点击后会先经过 WiFi 提醒。
+程序会记录这些快捷方式原来指向哪个软件。规则生效后，桌面或开始菜单里的快捷方式看起来不变，只是点击后会先经过 WiFi 提醒。
 
-#### 3. 创建 WiFi 规则
+#### 3. 创建网络规则
 
-回到 **WiFi 规则**。
+回到 **网络规则**。
 
 按页面上的三步来：
 
-1. 选择需要管控的 WiFi。
+1. 选择需要管控的网络，可以是 WiFi，也可以是有线网卡。
 2. 选择黑名单软件组。
-3. 确定规则，并让程序在后台运行。
+3. 确定规则，让程序在后台运行。
 
 #### 4. 触发提醒
 
-当电脑连接到匹配的 WiFi 时，点击被管控的快捷方式会打开提醒页。
+当电脑连接到匹配的网络时，点击被管控的快捷方式会打开提醒页。
 
 你可以选择：
 
-- 不启动，直接返回；
-- 切换到其他 WiFi；
+- 不启动，直接返回。
+- 切换到安全 WiFi。
+- 有线网络下，一键断开有线连接。
 - 输入密码，只允许这一次启动。
 
-密码放行只对本次启动有效，不会开启全局倒计时。
+密码放行只对本次启动有效，不需要设置允许时长，也不会开启全局倒计时。
 
 #### 5. 还原快捷方式
 
-可以在设置页点 **一键恢复快捷方式**，也可以运行：
+可以在设置页点击 **一键恢复快捷方式**，也可以运行：
 
 ```powershell
 .\restore-shortcuts.cmd
@@ -116,12 +118,12 @@ http://localhost:18765/settings
 
 ### 从源码构建
 
-只有开发、改代码、重新打包时才需要这些环境：
+只有开发、改代码或重新打包时才需要这些环境：
 
 - Windows
 - Git
-- CMake 和支持 C++17 的编译器，或 `PATH` 中可用的 MinGW
-- Node.js，用于前端语法检查和浏览器烟测
+- MinGW，或 CMake 加 C++20 编译器
+- Node.js，用于前端语法检查和浏览器 smoke test
 
 构建：
 
@@ -129,13 +131,13 @@ http://localhost:18765/settings
 .\scripts\build-mingw.ps1
 ```
 
-打包绿色包：
+打绿色包：
 
 ```powershell
 .\scripts\package-portable.ps1
 ```
 
-运行本地验收：
+本地验收：
 
 ```powershell
 .\scripts\local-acceptance.ps1
@@ -144,14 +146,14 @@ http://localhost:18765/settings
 ### 项目结构
 
 ```text
-src/core/        配置、日志、WiFi、规则、快捷方式逻辑
+src/core/        配置、日志、网络检测、规则、快捷方式逻辑
 src/ui/          本地 HTTP 服务、API、托盘图标
 src/ww-launch/   被替换快捷方式调用的小启动器
-frontend/        设置页、提醒页、WiFi 选择页
-scripts/         构建、打包、烟测、验收脚本
-tests/           原生烟测
-docs/            报告和截图
-release/         上传到 GitHub 的绿色包
+frontend/        设置页、提醒页、网络选择页
+scripts/         构建、打包、smoke test、验收脚本
+tests/           原生 smoke test
+docs/            截图和报告
+release/         GitHub Release 使用的绿色包
 ```
 
 ### 验证状态
@@ -165,10 +167,10 @@ release/         上传到 GitHub 的绿色包
 - `browser-smoke`
 - `validate-cmake`
 - PowerShell parser checks
-- Node `--check`
+- `node --check`
 - `package-portable`
 
-运行烟测测得工作集约约 **3.97 MiB**。
+运行时 smoke 测得工作集约 **4 MiB**。
 
 ### 许可证
 
@@ -182,39 +184,40 @@ release/         上传到 GitHub 的绿色包
 
 ## English
 
-WiFi Warning is a small Windows tray app. You choose WiFi networks and shortcut groups; when the PC is connected to a matching WiFi, opening a controlled shortcut shows a warning page before the real app starts.
+WiFi Warning is a Windows desktop tray app. You create rules by network: when the PC is connected to a chosen WiFi or wired network, opening a controlled shortcut shows a warning page before the real app starts.
 
-It is meant for simple self-control around distracting apps. For example, on a school, office, or library WiFi, a game or video shortcut can ask you to pause before it opens.
+It is built for simple self-control and managed-use cases around distracting or restricted apps, such as games, video apps, chat tools, or proxy tools. It changes shortcuts only, not the real apps. Shortcut names, icons, and locations stay the same.
 
 ![Settings screenshot](docs/screenshots/settings-desktop.png)
 
 ### Features
 
-- WiFi-based rules: warnings only trigger on the networks you choose.
-- Software groups: create a group first, then add shortcuts to it.
-- No app modification: only `.lnk` shortcut targets are replaced.
-- Same look: shortcut name, icon, and location stay the same.
-- One-click restore: restore replaced shortcuts when you want.
-- Portable package: no installer required.
-- Local first: settings run on localhost, and data stays in the current Windows user profile.
+- Rules for both WiFi and wired networks.
+- One-click wired disconnect and restore.
+- App groups are managed separately: create a group, then add `.lnk` shortcuts to it.
+- Replaced shortcuts keep the same name, icon, and location.
+- Warning page can switch to a safe WiFi, disconnect wired network, or allow this launch with a password.
+- Chinese and English UI: click **简体中文** or **English** to switch.
+- Portable package: extract and run. No Node.js, Python, CMake, or other development tools are needed for normal use.
+- Local-first: settings run on `localhost`, and config/logs stay under the current Windows user profile.
 
-### Download and Run
+### Download
 
 Download the portable package:
 
 [Latest WiFiWarning-portable.zip](https://github.com/SSRYLJRSS/wifi-warning/releases/latest)
 
-The same package is also kept in this repository:
+The repository also keeps a copy:
 
 [release/WiFiWarning-portable.zip](release/WiFiWarning-portable.zip)
 
-Normal use does not require Node.js, CMake, Python, or any development tools. Download the zip, extract it, then run:
+For normal use, download the zip, extract it, then run:
 
 ```powershell
 .\wifi-warning.exe
 ```
 
-To start it in the background:
+Start in the background:
 
 ```powershell
 .\start-minimized.cmd
@@ -236,9 +239,9 @@ Before deleting the folder, restore shortcuts first:
 
 ![Warning screenshot](docs/screenshots/warning-desktop.png)
 
-#### WiFi Picker
+#### Network Picker
 
-![WiFi picker screenshot](docs/screenshots/wifi-picker-desktop.png)
+![Network picker screenshot](docs/screenshots/wifi-picker-desktop.png)
 
 ### Tutorial
 
@@ -252,39 +255,40 @@ If the browser does not open automatically, visit:
 http://localhost:18765/settings
 ```
 
-#### 2. Create a Software Group
+#### 2. Create an App Group
 
-Click **Software Groups** in the left navigation.
+Click **App groups** in the left navigation.
 
-Click **New Software Group**, name it, then click **Choose Shortcuts**. Windows will open a file picker; select the `.lnk` shortcuts you want to control.
+Click **New app group**, name it, then click **Choose shortcuts**. Windows opens a file picker; select the `.lnk` shortcuts you want to control.
 
 WiFi Warning records what each shortcut originally opened. When a rule is active, the shortcut still looks the same on the Desktop or Start Menu, but launch goes through WiFi Warning first.
 
-#### 3. Create a WiFi Rule
+#### 3. Create a Network Rule
 
-Go back to **WiFi Rules**.
+Go back to **Network rules**.
 
 Follow the three steps on the page:
 
-1. Choose the WiFi network.
-2. Choose the shortcut group.
-3. Confirm the rule and keep the tray app running.
+1. Choose the network to control. It can be WiFi or a wired adapter.
+2. Choose the blocked app group.
+3. Save the rule and keep the tray app running.
 
 #### 4. Trigger the Warning
 
-When the PC is connected to the matching WiFi, opening a controlled shortcut shows the warning page.
+When the PC is connected to the matching network, opening a controlled shortcut shows the warning page.
 
 You can:
 
 - stop and go back;
-- switch to another WiFi;
+- switch to a safe WiFi;
+- disconnect wired network;
 - enter the password to allow only this launch.
 
-Password bypass is one-time only. It does not start a global countdown.
+Password bypass is one-time only. There is no allow duration and no global countdown.
 
 #### 5. Restore Shortcuts
 
-Use **One-click restore shortcuts** in settings, or run:
+Use **Restore all shortcuts** in settings, or run:
 
 ```powershell
 .\restore-shortcuts.cmd
@@ -296,7 +300,7 @@ These tools are only needed for development, code changes, or rebuilding the pac
 
 - Windows
 - Git
-- CMake with a C++17-capable compiler, or MinGW available in `PATH`
+- MinGW, or CMake with a C++20 compiler
 - Node.js for frontend checks and browser smoke tests
 
 Build:
@@ -320,14 +324,14 @@ Run local acceptance:
 ### Project Layout
 
 ```text
-src/core/        Config, logging, WiFi, rules, shortcut logic
+src/core/        Config, logging, network detection, rules, shortcut logic
 src/ui/          Local HTTP server, API handlers, tray icon
 src/ww-launch/   Small launcher used by replaced shortcuts
-frontend/        Settings, warning page, WiFi picker
+frontend/        Settings, warning page, network picker
 scripts/         Build, package, smoke, acceptance scripts
 tests/           Native smoke tests
-docs/            Reports and screenshots
-release/         Portable zip uploaded to GitHub
+docs/            Screenshots and reports
+release/         Portable zip used for GitHub Release
 ```
 
 ### Validation
@@ -341,10 +345,10 @@ Local validation passed on 2026-06-09.
 - `browser-smoke`
 - `validate-cmake`
 - PowerShell parser checks
-- Node `--check`
+- `node --check`
 - `package-portable`
 
-Runtime smoke measured about **3.97 MiB** working set.
+Runtime smoke measured about **4 MiB** working set.
 
 ### License
 

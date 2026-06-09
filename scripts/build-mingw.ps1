@@ -15,6 +15,7 @@ $commonFlags = @(
   "-DUNICODE",
   "-D_UNICODE",
   "-DWIN32_LEAN_AND_MEAN",
+  "-D_WIN32_WINNT=0x0600",
   "-municode",
   "-ffunction-sections",
   "-fdata-sections",
@@ -35,6 +36,7 @@ $serviceCoreSources = @(
   "src/core/http_probe.cpp",
   "src/core/json.cpp",
   "src/core/logger.cpp",
+  "src/core/network_manager.cpp",
   "src/core/rule_engine.cpp",
   "src/core/shortcut_manager.cpp",
   "src/core/util.cpp",
@@ -58,7 +60,7 @@ $smokeSources = @(
   "src/ui/api_handlers.cpp",
   "src/ui/http_server.cpp"
 )
-$libs = @("-Wl,--gc-sections", "-ladvapi32", "-lbcrypt", "-lcomdlg32", "-lgdi32", "-lpsapi", "-lole32", "-lshell32", "-luuid", "-lversion", "-lwlanapi", "-lws2_32")
+$libs = @("-Wl,--gc-sections", "-ladvapi32", "-lbcrypt", "-lcomdlg32", "-lgdi32", "-liphlpapi", "-lpsapi", "-lole32", "-lshell32", "-luuid", "-lversion", "-lwlanapi", "-lws2_32")
 
 function Compile-Resource($name, $resource) {
   if (-not $resource) {

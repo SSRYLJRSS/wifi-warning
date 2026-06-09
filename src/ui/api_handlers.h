@@ -40,6 +40,9 @@ private:
     HttpResponse wifiCurrent();
     HttpResponse wifiAvailable();
     HttpResponse wifiSwitch(const std::string& body);
+    HttpResponse networkCurrent();
+    HttpResponse wiredAdapters();
+    HttpResponse wiredToggle(const std::string& body);
     HttpResponse stats();
     HttpResponse bypass(const std::string& body);
     HttpResponse appBrowse();

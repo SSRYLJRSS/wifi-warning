@@ -25,6 +25,9 @@ struct BlockedApp {
 struct Rule {
     std::string id;
     std::string ssid;
+    std::string network_type = "wifi";
+    std::string network_id;
+    std::string network_name;
     std::string app_group_id;
     std::vector<BlockedApp> blocked_apps;
     std::string safe_wifi_ssid;
@@ -50,7 +53,7 @@ struct Settings {
 };
 
 struct AppConfig {
-    std::string version = "1.0.0";
+    std::string version = "1.5.0";
     Settings settings;
     std::vector<AppGroup> app_groups;
     std::vector<Rule> rules;

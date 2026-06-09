@@ -105,6 +105,9 @@ JsonValue configToJson(const AppConfig& config) {
         rules.push_back(JsonValue::Object{
             {"id", rule.id},
             {"ssid", rule.ssid},
+            {"network_type", rule.network_type.empty() ? "wifi" : rule.network_type},
+            {"network_id", rule.network_id.empty() ? rule.ssid : rule.network_id},
+            {"network_name", rule.network_name.empty() ? (rule.network_id.empty() ? rule.ssid : rule.network_id) : rule.network_name},
             {"app_group_id", rule.app_group_id},
             {"blocked_apps", appsToJson(rule.blocked_apps)},
             {"safe_wifi_ssid", rule.safe_wifi_ssid},
@@ -158,6 +161,12 @@ AppConfig configFromJson(const JsonValue& value) {
             Rule rule;
             rule.id = stringField(item, "id");
             rule.ssid = stringField(item, "ssid");
+            rule.network_type = stringField(item, "network_type", "wifi");
+            rule.network_id = stringField(item, "network_id", rule.ssid);
+            rule.network_name = stringField(item, "network_name", rule.network_id.empty() ? rule.ssid : rule.network_id);
+            if (rule.network_type.empty()) rule.network_type = "wifi";
+            if (rule.network_id.empty() && !rule.ssid.empty()) rule.network_id = rule.ssid;
+            if (rule.ssid.empty() && rule.network_type == "wifi") rule.ssid = rule.network_id;
             rule.app_group_id = stringField(item, "app_group_id");
             rule.safe_wifi_ssid = stringField(item, "safe_wifi_ssid");
             rule.safe_wifi_password = stringField(item, "safe_wifi_password");
@@ -168,7 +177,7 @@ AppConfig configFromJson(const JsonValue& value) {
                     if (!app.original_path.empty()) rule.blocked_apps.push_back(app);
                 }
             }
-            if (!rule.id.empty() && !rule.ssid.empty()) config.rules.push_back(rule);
+            if (!rule.id.empty() && !rule.network_id.empty()) config.rules.push_back(rule);
         }
     }
     return config;
@@ -180,7 +189,7 @@ ConfigManager::ConfigManager(std::wstring path) : path_(std::move(path)) {
 
 AppConfig ConfigManager::defaults() {
     AppConfig config;
-    config.version = "1.0.0";
+    config.version = "1.5.0";
     config.settings.auto_start = true;
     config.settings.protection_enabled = true;
     config.settings.dark_mode = true;

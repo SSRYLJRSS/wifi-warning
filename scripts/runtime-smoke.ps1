@@ -18,7 +18,7 @@ if (Test-Path $runtime) {
 New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 
 $config = @{
-  version = "1.0.0"
+  version = "1.5.0"
   settings = @{
     auto_start = $false
     protection_enabled = $true
@@ -33,6 +33,9 @@ $config = @{
     @{
       id = "runtime_rule"
       ssid = "Office-WiFi"
+      network_type = "wifi"
+      network_id = "Office-WiFi"
+      network_name = "Office-WiFi"
       safe_wifi_ssid = "Home-WiFi"
       safe_wifi_password = ""
       description = "运行时 smoke"
@@ -62,11 +65,15 @@ if ($null -ne $psi.Environment) {
   $psi.Environment["APPDATA"] = $appData
   $psi.Environment["WW_TEST_CURRENT_SSID"] = "Office-WiFi"
   $psi.Environment["WW_TEST_AVAILABLE_WIFI_JSON"] = '[{"ssid":"Office-WiFi","signal_quality":80,"connected":true,"secure":true,"auth":"WPA2-PSK"},{"ssid":"Home-WiFi","signal_quality":93,"connected":false,"secure":true,"auth":"WPA2-PSK"}]'
+  $psi.Environment["WW_TEST_WIRED_ADAPTERS_JSON"] = '[{"id":"Ethernet 1","name":"Ethernet 1","connected":true,"enabled":true,"status":"up"}]'
+  $psi.Environment["WW_TEST_WIRED_ACTION"] = "success"
   $psi.Environment["WW_TEST_CONNECT_WIFI"] = "dialog"
 } else {
   $psi.EnvironmentVariables["APPDATA"] = $appData
   $psi.EnvironmentVariables["WW_TEST_CURRENT_SSID"] = "Office-WiFi"
   $psi.EnvironmentVariables["WW_TEST_AVAILABLE_WIFI_JSON"] = '[{"ssid":"Office-WiFi","signal_quality":80,"connected":true,"secure":true,"auth":"WPA2-PSK"},{"ssid":"Home-WiFi","signal_quality":93,"connected":false,"secure":true,"auth":"WPA2-PSK"}]'
+  $psi.EnvironmentVariables["WW_TEST_WIRED_ADAPTERS_JSON"] = '[{"id":"Ethernet 1","name":"Ethernet 1","connected":true,"enabled":true,"status":"up"}]'
+  $psi.EnvironmentVariables["WW_TEST_WIRED_ACTION"] = "success"
   $psi.EnvironmentVariables["WW_TEST_CONNECT_WIFI"] = "dialog"
 }
 
@@ -101,6 +108,9 @@ try {
   $warningResponse = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/warning?appName=Runtime%20App&app=C%3A%5CRuntime%5CApp.exe&ssid=Office-WiFi&ruleId=runtime_rule" -TimeoutSec 2
   $pickerResponse = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/wifi-picker" -TimeoutSec 2
   $wifiResponse = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/wifi/current" -TimeoutSec 2
+  $networkResponse = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/network/current" -TimeoutSec 2
+  $wiredResponse = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/network/wired" -TimeoutSec 2
+  $wiredToggleResponse = Invoke-WebRequest -UseBasicParsing -Method Post -Uri "$baseUrl/api/network/wired/toggle" -ContentType "application/json" -Body '{"id":"Ethernet 1","enabled":false}' -TimeoutSec 2
   $wifiAvailableResponse = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/wifi/available" -TimeoutSec 2
   $wifiSwitchResponse = Invoke-WebRequest -UseBasicParsing -Method Post -Uri "$baseUrl/api/wifi/switch" -ContentType "application/json" -Body '{"ssid":"Home-WiFi"}' -TimeoutSec 2
   $statsResponse = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/stats" -TimeoutSec 2
@@ -120,6 +130,9 @@ try {
   if ($pickerResponse.StatusCode -ne 200 -or $pickerResponse.Content -notmatch 'networkList' -or $pickerResponse.Content -notmatch 'refreshNetworks') { throw "wifi picker smoke failed" }
   if ($wifiResponse.Content -notmatch '"adapter_available"') { throw "wifi current response missing adapter_available" }
   if ($wifiResponse.Content -notmatch '"ssid": "Office-WiFi"') { throw "wifi current did not use test ssid" }
+  if ($networkResponse.Content -notmatch '"type": "wifi"' -or $networkResponse.Content -notmatch 'Office-WiFi') { throw "network current response missing current wifi" }
+  if ($wiredResponse.Content -notmatch 'Ethernet 1') { throw "wired adapters response missing test adapter" }
+  if ($wiredToggleResponse.Content -notmatch 'disable_requested') { throw "wired toggle response missing disable request" }
   if ($wifiAvailableResponse.Content -notmatch 'Home-WiFi') { throw "wifi available response missing test network" }
   if ($wifiSwitchResponse.Content -notmatch '"ok": true') { throw "wifi switch test failed" }
   if ($wifiSwitchResponse.Content -notmatch '"connect_requested": false') { throw "wifi switch response missing connect_requested false" }

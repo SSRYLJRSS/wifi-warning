@@ -94,8 +94,8 @@ async function checkSettingsRuleCrud(page, baseUrl) {
 
   await page.click('[data-tab="rules"]');
   await page.waitForSelector("#rulesPanel.active", { timeout: 3000 });
-  await page.selectOption("#ruleWifiSelect", "Cafe-WiFi").catch(async () => {
-    await page.fill("#manualSsid", "Cafe-WiFi");
+  await page.selectOption("#ruleNetworkSelect", "wifi:Cafe-WiFi").catch(async () => {
+    await page.fill("#manualNetwork", "Cafe-WiFi");
   });
   await page.selectOption("#ruleGroupSelect", { label: "CRUD 黑名单 (1)" });
   await Promise.all([
@@ -106,14 +106,14 @@ async function checkSettingsRuleCrud(page, baseUrl) {
   await page.waitForFunction(async ({ url, shortcutPath }) => {
     const response = await fetch(`${url}/api/config`);
     const data = await response.json();
-    return data.config?.rules?.some((rule) => rule.ssid === "Cafe-WiFi" && rule.app_group_id && rule.blocked_apps?.some((app) => {
+    return data.config?.rules?.some((rule) => rule.network_type === "wifi" && rule.network_id === "Cafe-WiFi" && rule.app_group_id && rule.blocked_apps?.some((app) => {
       return app.name === "CRUD App" && (!shortcutPath || app.shortcut_paths?.includes(shortcutPath));
     }));
   }, { url: baseUrl, shortcutPath }, { timeout: 3000 });
 
   let createdCard = page.locator(".rule-card", { hasText: "Cafe-WiFi" });
   await createdCard.locator('[data-action="edit"]').click();
-  await page.fill("#manualSsid", "Cafe-Updated");
+  await page.fill("#manualNetwork", "Cafe-Updated");
   await Promise.all([
     page.waitForResponse((response) => response.url().includes("/api/config") && response.request().method() === "POST", { timeout: 3000 }),
     page.click("#saveRuleButton")
@@ -122,7 +122,7 @@ async function checkSettingsRuleCrud(page, baseUrl) {
   await page.waitForFunction(async (url) => {
     const response = await fetch(`${url}/api/config`);
     const data = await response.json();
-    return data.config?.rules?.some((rule) => rule.ssid === "Cafe-Updated" && rule.blocked_apps?.some((app) => app.name === "CRUD App"));
+    return data.config?.rules?.some((rule) => rule.network_type === "wifi" && rule.network_id === "Cafe-Updated" && rule.blocked_apps?.some((app) => app.name === "CRUD App"));
   }, baseUrl, { timeout: 3000 });
 
   createdCard = page.locator(".rule-card", { hasText: "Cafe-Updated" });
@@ -134,7 +134,7 @@ async function checkSettingsRuleCrud(page, baseUrl) {
   await page.waitForFunction(async (url) => {
     const response = await fetch(`${url}/api/config`);
     const data = await response.json();
-    return !data.config?.rules?.some((rule) => rule.ssid === "Cafe-Updated");
+    return !data.config?.rules?.some((rule) => rule.network_id === "Cafe-Updated");
   }, baseUrl, { timeout: 3000 });
 }
 
@@ -196,9 +196,13 @@ async function checkSettings(page, baseUrl, outDir) {
   await page.goto(`${baseUrl}/settings`, { waitUntil: "networkidle" });
   await page.waitForSelector("#rulesList .rule-card", { timeout: 5000 });
   const text = await visibleText(page);
-  for (const expected of ["WiFi 规则", "软件组", "确定规则", "一键恢复快捷方式"]) {
+  for (const expected of ["网络规则", "软件组", "确定规则", "一键恢复快捷方式"]) {
     if (!text.includes(expected)) fail(`settings page missing ${expected}`);
   }
+  await page.click('[data-lang="en-US"]');
+  await page.waitForFunction(() => document.body.innerText.includes("Network rules") && document.body.innerText.includes("App groups"), { timeout: 3000 });
+  await page.click('[data-lang="zh-CN"]');
+  await page.waitForFunction(() => document.body.innerText.includes("网络规则") && document.body.innerText.includes("软件组"), { timeout: 3000 });
   await assertNoHorizontalOverflow(page, "settings screenshot");
   await screenshot(page, outDir, "settings-desktop");
   await page.click('[data-tab="groups"]');
@@ -324,7 +328,7 @@ async function checkPicker(page, baseUrl, outDir) {
   await page.goto(`${baseUrl}/wifi-picker`, { waitUntil: "networkidle" });
   await page.waitForSelector(".network-row", { timeout: 5000 });
   const text = await visibleText(page);
-  for (const expected of ["选择 WiFi", "Office-WiFi", "Home-WiFi", "连接"]) {
+  for (const expected of ["选择网络", "Office-WiFi", "Home-WiFi", "连接", "Ethernet 1"]) {
     if (!text.includes(expected)) fail(`wifi picker missing ${expected}`);
   }
   await assertNoHorizontalOverflow(page, "wifi picker screenshot");
@@ -349,7 +353,7 @@ async function checkStatsAfterActions(page, baseUrl) {
   await page.click("#refreshStats");
   await page.waitForFunction(() => {
     const text = document.body.innerText;
-    return (text.includes("已允许本次启动") || text.includes("已临时允许")) && text.includes("已切换网络") && text.includes("Home-WiFi");
+    return text.includes("已允许本次启动") && text.includes("已切换网络") && text.includes("Home-WiFi");
   }, { timeout: 5000 });
   const blockedWeek = Number(await page.locator("#blockedWeek").innerText());
   if (!Number.isFinite(blockedWeek) || blockedWeek < 0) fail(`invalid blocked week metric: ${blockedWeek}`);

@@ -2,7 +2,6 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>WiFi 提醒</title>
     <link rel="stylesheet" href="/css/style.css">
   </head>
@@ -12,34 +11,35 @@
         <span class="warning-icon" id="fallbackIcon">!</span>
         <img id="appIcon" class="app-icon hidden" alt="">
         <div>
-          <p class="eyebrow">WiFi 提醒</p>
+          <p class="eyebrow" data-i18n="appName">WiFi 提醒</p>
           <h1 id="appName">应用</h1>
         </div>
       </div>
-      <p class="warning-copy">已在此网络下被阻止</p>
+      <p class="warning-copy" data-i18n="warningBlocked">已在此网络下被阻止</p>
       <dl class="detail-list">
         <div>
-          <dt>当前网络</dt>
+          <dt data-i18n="currentNetwork">当前网络</dt>
           <dd id="ssid">未知</dd>
         </div>
         <div>
-          <dt>规则</dt>
+          <dt data-i18n="rules">网络规则</dt>
           <dd id="ruleDescription">读取中</dd>
         </div>
       </dl>
       <div class="action-grid">
         <button id="switchSafe" class="primary-button">切换到安全网络</button>
-        <button id="pickWifi" class="ghost-button">选择其他网络</button>
-        <button id="showBypass" class="ghost-button danger-text">允许本次启动</button>
-        <button id="closePage" class="ghost-button">知道了</button>
+        <button id="pickWifi" class="ghost-button" data-i18n="chooseOtherNetwork">选择其他网络</button>
+        <button id="showBypass" class="ghost-button danger-text" data-i18n="allowOnce">允许本次启动</button>
+        <button id="closePage" class="ghost-button" data-i18n="close">知道了</button>
       </div>
       <form id="bypassForm" class="bypass-box hidden">
-        <input id="password" type="password" placeholder="输入放行密码">
-        <button class="primary-button" type="submit">确认</button>
+        <input id="password" type="password" data-i18n-placeholder="bypassPlaceholder" placeholder="输入放行密码">
+        <button class="primary-button" type="submit" data-i18n="confirm">确认</button>
       </form>
       <p id="statusLine" class="muted"></p>
     </main>
     <div id="toast" class="toast hidden"></div>
+    <script src="/js/i18n.js"></script>
     <script src="/js/api.js"></script>
     <script src="/js/polling.js"></script>
     <script src="/js/warning.js"></script>

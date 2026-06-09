@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$SafeWifiSsid = "",
   [string]$SafeWifiPassword = "",
   [switch]$RunWifiSwitch,
@@ -136,7 +136,7 @@ function Start-TestService {
   }
   New-Item -ItemType Directory -Force -Path $configDir | Out-Null
   $config = @{
-    version = "1.0.0"
+    version = "1.5.0"
     settings = @{
       auto_start = $false
       protection_enabled = $true

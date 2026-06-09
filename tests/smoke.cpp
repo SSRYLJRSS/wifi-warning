@@ -2,6 +2,7 @@
 #include "core/config_manager.h"
 #include "core/json.h"
 #include "core/logger.h"
+#include "core/network_manager.h"
 #include "core/rule_engine.h"
 #include "core/shortcut_manager.h"
 #include "core/util.h"
@@ -196,6 +197,60 @@ static LauncherRunResult runLauncherDry(const std::string& launcher, const std::
     return result;
 }
 
+static LauncherRunResult runLauncherDryForNetwork(
+    const std::string& launcher,
+    const std::string& configPath,
+    const std::string& appPath,
+    const std::string& networkType,
+    const std::string& networkId,
+    const std::string& ruleId,
+    const std::string& appArgs = "") {
+    LauncherRunResult result;
+    SECURITY_ATTRIBUTES security{};
+    security.nLength = sizeof(security);
+    security.bInheritHandle = TRUE;
+    HANDLE readPipe = nullptr;
+    HANDLE writePipe = nullptr;
+    if (!CreatePipe(&readPipe, &writePipe, &security, 0)) return result;
+    SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
+
+    std::wstring command = quoteProcessArg(ww::utf8ToWide(launcher))
+        + L" --dry-run --config " + quoteProcessArg(ww::utf8ToWide(configPath))
+        + L" --app " + quoteProcessArg(ww::utf8ToWide(appPath))
+        + L" --rule " + quoteProcessArg(ww::utf8ToWide(ruleId))
+        + L" --network-type " + quoteProcessArg(ww::utf8ToWide(networkType))
+        + L" --network-id " + quoteProcessArg(ww::utf8ToWide(networkId));
+    if (!appArgs.empty()) command += L" --app-args " + quoteProcessArg(ww::utf8ToWide(appArgs));
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdOutput = writePipe;
+    startup.hStdError = writePipe;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    PROCESS_INFORMATION process{};
+
+    BOOL ok = CreateProcessW(nullptr, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+    CloseHandle(writePipe);
+    if (!ok) {
+        CloseHandle(readPipe);
+        return result;
+    }
+
+    char buffer[512];
+    DWORD read = 0;
+    DWORD started = GetTickCount();
+    while (ReadFile(readPipe, buffer, sizeof(buffer), &read, nullptr) && read > 0) {
+        result.output.append(buffer, buffer + read);
+    }
+    WaitForSingleObject(process.hProcess, 5000);
+    result.elapsed_ms = GetTickCount() - started;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    CloseHandle(readPipe);
+    return result;
+}
+
 static DWORD runLauncherWithEnv(const std::wstring& command, const std::vector<std::pair<std::wstring, std::wstring>>& env) {
     std::vector<std::pair<std::wstring, std::wstring>> oldValues;
     for (const auto& [key, value] : env) {
@@ -338,8 +393,21 @@ int wmain(int argc, wchar_t** argv) {
     group.apps = rule.blocked_apps;
     for (auto& app : group.apps) app.replaced_shortcuts.clear();
     rule.app_group_id = group.id;
+
+    ww::Rule wiredRule = rule;
+    wiredRule.id = "rule_wired";
+    wiredRule.ssid = "";
+    wiredRule.network_type = "wired";
+    wiredRule.network_id = "Ethernet 1";
+    wiredRule.network_name = "Ethernet 1";
+    wiredRule.safe_wifi_ssid = "";
+    wiredRule.safe_wifi_password = "";
+    wiredRule.description = "wired smoke";
+    wiredRule.blocked_apps = {rule.blocked_apps[0]};
+
     config.app_groups.push_back(group);
     config.rules.push_back(rule);
+    config.rules.push_back(wiredRule);
     config.settings.bypass_password = ww::sha256Hex("secret");
     if (!manager.save(config)) return fail("config save failed");
 
@@ -347,6 +415,11 @@ int wmain(int argc, wchar_t** argv) {
     auto match = ww::findBlockingRule(loaded, "Office-WiFi", fakeAppPath);
     if (!match || match->rule.id != "rule_test") return fail("rule engine did not match");
     if (ww::findBlockingRule(loaded, "Home-WiFi", fakeAppPath)) return fail("rule engine matched safe ssid");
+    auto wiredMatch = ww::findBlockingRuleForNetwork(loaded, ww::NetworkIdentity{"wired", "Ethernet 1", "Ethernet 1"}, fakeAppPath);
+    if (!wiredMatch || wiredMatch->rule.id != "rule_wired") return fail("rule engine did not match wired network");
+    if (ww::findBlockingRuleForNetwork(loaded, ww::NetworkIdentity{"wired", "Ethernet 2", "Ethernet 2"}, fakeAppPath)) {
+        return fail("rule engine matched wrong wired network");
+    }
 
     std::wstring autoStartTestKey = L"Software\\WiFiWarningSmoke\\" + std::to_wstring(GetCurrentProcessId());
     SetEnvironmentVariableW(L"WW_TEST_AUTOSTART_RUN_KEY", autoStartTestKey.c_str());
@@ -399,6 +472,14 @@ int wmain(int argc, wchar_t** argv) {
     if (roundtrip.app_groups.size() != 1 || roundtrip.app_groups[0].apps.size() != 2 || roundtrip.rules[0].app_group_id != "group_test") {
         return fail("config json roundtrip lost app groups");
     }
+    bool foundWiredRoundtrip = false;
+    for (const auto& item : roundtrip.rules) {
+        if (item.id == "rule_wired" && item.network_type == "wired" && item.network_id == "Ethernet 1") {
+            foundWiredRoundtrip = true;
+            break;
+        }
+    }
+    if (!foundWiredRoundtrip) return fail("config json roundtrip lost wired rule fields");
 
     ww::Logger logger(logDir.wstring());
     ww::LogRecord record;
@@ -575,6 +656,26 @@ int wmain(int argc, wchar_t** argv) {
     if (!fileWifi.connected || fileWifi.ssid != "Home-WiFi") return fail("wifi detector file override failed");
     ww::writeTextFileUtf8(testSsidFile.wstring(), "Office-WiFi");
 
+    SetEnvironmentVariableW(L"WW_TEST_CURRENT_NETWORK_TYPE", L"wired");
+    SetEnvironmentVariableW(L"WW_TEST_CURRENT_NETWORK_ID", L"Ethernet 1");
+    SetEnvironmentVariableW(
+        L"WW_TEST_WIRED_ADAPTERS_JSON",
+        L"[{\"id\":\"Ethernet 1\",\"name\":\"Ethernet 1\",\"connected\":true,\"enabled\":true,\"status\":\"up\"},"
+        L"{\"id\":\"Ethernet Backup\",\"name\":\"Ethernet Backup\",\"connected\":false,\"enabled\":true,\"status\":\"down\"}]");
+    SetEnvironmentVariableW(L"WW_TEST_WIRED_ACTION", L"success");
+    auto currentNetwork = ww::getCurrentNetwork();
+    if (!currentNetwork.connected || currentNetwork.type != "wired" || currentNetwork.id != "Ethernet 1") {
+        return fail("network manager wired override failed");
+    }
+    auto wiredAdapters = ww::listWiredAdapters();
+    if (wiredAdapters.size() != 2 || wiredAdapters[0].id != "Ethernet 1" || !wiredAdapters[0].connected) {
+        return fail("network manager wired adapter override failed");
+    }
+    auto wiredAction = ww::setWiredAdapterEnabled("Ethernet 1", false);
+    if (!wiredAction.ok || !wiredAction.requested || wiredAction.status != "disable_requested") {
+        return fail("network manager wired action override failed");
+    }
+
     ww::AppConfig restoreViaApiConfig = manager.load();
     restoreViaApiConfig.rules[0].blocked_apps[0].replaced_shortcuts = {{replaceResult.shortcut, replaceResult.backup}};
     restoreViaApiConfig.settings.protection_enabled = true;
@@ -594,6 +695,10 @@ int wmain(int argc, wchar_t** argv) {
     std::string settingsResponse = httpGet(smokePort, "/settings");
     std::string faviconResponse = httpGet(smokePort, "/favicon.ico");
     std::string wifiCurrentResponse = httpGet(smokePort, "/api/wifi/current");
+    std::string networkCurrentResponse = httpGet(smokePort, "/api/network/current");
+    std::string wiredAdaptersResponse = httpGet(smokePort, "/api/network/wired");
+    std::string wiredToggleBody = ww::stringifyJson(ww::JsonValue::Object{{"id", "Ethernet 1"}, {"enabled", false}});
+    std::string wiredToggleResponse = httpPostJson(smokePort, "/api/network/wired/toggle", wiredToggleBody);
     std::string wifiAvailableResponse = httpGet(smokePort, "/api/wifi/available");
     std::string wifiSwitchBody = ww::stringifyJson(ww::JsonValue::Object{{"ssid", "Home-WiFi"}});
     std::string wifiSwitchResponse = httpPostJson(smokePort, "/api/wifi/switch", wifiSwitchBody);
@@ -740,6 +845,15 @@ int wmain(int argc, wchar_t** argv) {
     if (wifiCurrentResponse.find("\"ssid\": \"Office-WiFi\"") == std::string::npos) {
         return fail("http /api/wifi/current test ssid failed");
     }
+    if (networkCurrentResponse.find("200 OK") == std::string::npos || networkCurrentResponse.find("\"type\": \"wired\"") == std::string::npos || networkCurrentResponse.find("Ethernet 1") == std::string::npos) {
+        return fail("http /api/network/current wired smoke failed");
+    }
+    if (wiredAdaptersResponse.find("200 OK") == std::string::npos || wiredAdaptersResponse.find("\"adapters\"") == std::string::npos || wiredAdaptersResponse.find("Ethernet Backup") == std::string::npos) {
+        return fail("http /api/network/wired smoke failed");
+    }
+    if (wiredToggleResponse.find("200 OK") == std::string::npos || wiredToggleResponse.find("\"ok\": true") == std::string::npos || wiredToggleResponse.find("disable_requested") == std::string::npos) {
+        return fail("http /api/network/wired/toggle smoke failed");
+    }
     if (wifiAvailableResponse.find("200 OK") == std::string::npos || wifiAvailableResponse.find("\"networks\"") == std::string::npos || wifiAvailableResponse.find("Home-WiFi") == std::string::npos) {
         return fail("http /api/wifi/available smoke failed");
     }
@@ -770,7 +884,7 @@ int wmain(int argc, wchar_t** argv) {
     if (warningResponse.find("appIcon") == std::string::npos || warningResponse.find("fallbackIcon") == std::string::npos) {
         return fail("http /warning app icon markup missing");
     }
-    if (warningJsResponse.find("200 OK") == std::string::npos || warningJsResponse.find("safe_wifi_password") == std::string::npos || warningJsResponse.find("Api.switchWifi(safe") == std::string::npos) {
+    if (warningJsResponse.find("200 OK") == std::string::npos || warningJsResponse.find("safe_wifi_password") == std::string::npos || warningJsResponse.find("Api.switchWifi(safe") == std::string::npos || warningJsResponse.find("Api.toggleWired") == std::string::npos) {
         return fail("http /warning safe wifi password wiring missing");
     }
     if (warningJsResponse.find("appIconUrl") == std::string::npos || warningJsResponse.find("loadAppIcon") == std::string::npos) {
@@ -782,7 +896,7 @@ int wmain(int argc, wchar_t** argv) {
     if (appIconResponse.find(std::string("\0\0\1\0", 4)) == std::string::npos) {
         return fail("http /api/apps/icon did not return ico bytes");
     }
-    if (pickerResponse.find("200 OK") == std::string::npos || pickerResponse.find("选择 WiFi") == std::string::npos) {
+    if (pickerResponse.find("200 OK") == std::string::npos || pickerResponse.find("选择网络") == std::string::npos) {
         return fail("http /wifi-picker smoke failed");
     }
     if (scanResponse.find("200 OK") == std::string::npos || scanResponse.find("\"shortcuts\"") == std::string::npos || scanResponse.find("Other App") != std::string::npos) {
@@ -871,6 +985,24 @@ int wmain(int argc, wchar_t** argv) {
     if (allowDecision.output.find("\"decision\":\"allow\"") == std::string::npos || allowDecision.output.find("no_matching_rule") == std::string::npos) {
         return fail("launcher dry-run allow decision failed: " + allowDecision.output);
     }
+
+    LauncherRunResult wiredBlockDecision = runLauncherDryForNetwork(launcher, configPathUtf8, fakeAppPath, "wired", "Ethernet 1", "rule_wired", originalAppArgs);
+    if (wiredBlockDecision.output.find("\"decision\":\"block\"") == std::string::npos
+        || wiredBlockDecision.output.find("\"rule_id\":\"rule_wired\"") == std::string::npos
+        || wiredBlockDecision.output.find("\"network_type\":\"wired\"") == std::string::npos
+        || wiredBlockDecision.output.find("networkId=Ethernet+1") == std::string::npos) {
+        return fail("launcher wired dry-run block decision failed: " + wiredBlockDecision.output);
+    }
+
+    LauncherRunResult wiredAllowDecision = runLauncherDryForNetwork(launcher, configPathUtf8, fakeAppPath, "wired", "Ethernet 2", "rule_wired");
+    if (wiredAllowDecision.output.find("\"decision\":\"allow\"") == std::string::npos || wiredAllowDecision.output.find("no_matching_rule") == std::string::npos) {
+        return fail("launcher wired dry-run allow decision failed: " + wiredAllowDecision.output);
+    }
+
+    SetEnvironmentVariableW(L"WW_TEST_CURRENT_NETWORK_TYPE", nullptr);
+    SetEnvironmentVariableW(L"WW_TEST_CURRENT_NETWORK_ID", nullptr);
+    SetEnvironmentVariableW(L"WW_TEST_WIRED_ADAPTERS_JSON", nullptr);
+    SetEnvironmentVariableW(L"WW_TEST_WIRED_ACTION", nullptr);
     SetEnvironmentVariableW(L"WW_TEST_CURRENT_SSID", L"<no-adapter>");
     LauncherRunResult noAdapterDecision = runLauncherDry(launcher, configPathUtf8, fakeAppPath, "");
     SetEnvironmentVariableW(L"WW_TEST_CURRENT_SSID", L"Office-WiFi");

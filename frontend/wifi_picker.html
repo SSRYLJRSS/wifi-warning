@@ -2,22 +2,22 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>选择 WiFi</title>
+    <title>选择网络</title>
     <link rel="stylesheet" href="/css/style.css">
   </head>
   <body class="picker-page">
     <main class="picker-shell">
       <header class="panel-header">
         <div>
-          <p class="eyebrow">网络</p>
-          <h1>选择 WiFi</h1>
+          <p class="eyebrow" data-i18n="network">网络</p>
+          <h1 data-i18n="pickerTitle">选择网络</h1>
         </div>
-        <button id="refreshNetworks" class="ghost-button">刷新</button>
+        <button id="refreshNetworks" class="ghost-button" data-i18n="refresh">刷新</button>
       </header>
       <div id="networkList" class="network-list"></div>
     </main>
     <div id="toast" class="toast hidden"></div>
+    <script src="/js/i18n.js"></script>
     <script src="/js/api.js"></script>
     <script src="/js/wifi_picker.js"></script>
   </body>

@@ -2,8 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>WiFi 提醒设置</title>
+    <title>WiFi 提醒</title>
     <link rel="stylesheet" href="/css/style.css">
   </head>
   <body class="app-shell">
@@ -11,41 +10,49 @@
       <div class="brand">
         <span class="brand-mark">!</span>
         <div>
-          <strong>WiFi 提醒</strong>
+          <strong data-i18n="appName">WiFi 提醒</strong>
           <span id="currentSsid">检测中</span>
         </div>
       </div>
-      <nav class="nav-tabs" aria-label="设置导航">
-        <button class="nav-item active" data-tab="rules">WiFi 规则</button>
-        <button class="nav-item" data-tab="groups">软件组</button>
-        <button class="nav-item" data-tab="password">密码</button>
-        <button class="nav-item" data-tab="stats">统计</button>
-        <button class="nav-item" data-tab="about">关于</button>
+
+      <nav class="nav-tabs" aria-label="Settings">
+        <button class="nav-item active" data-tab="rules" data-i18n="rules">网络规则</button>
+        <button class="nav-item" data-tab="groups" data-i18n="softwareGroups">软件组</button>
+        <button class="nav-item" data-tab="password" data-i18n="password">密码</button>
+        <button class="nav-item" data-tab="stats" data-i18n="stats">统计</button>
+        <button class="nav-item" data-tab="about" data-i18n="about">关于</button>
       </nav>
+
       <label class="switch-row">
-        <span>防护</span>
+        <span data-i18n="protection">防护</span>
         <input id="protectionToggle" type="checkbox">
       </label>
       <label class="switch-row">
-        <span>开机启动</span>
+        <span data-i18n="autoStart">开机启动</span>
         <input id="autoStartToggle" type="checkbox">
       </label>
       <label class="switch-row">
-        <span>深色</span>
+        <span data-i18n="darkMode">深色</span>
         <input id="darkToggle" type="checkbox">
       </label>
+
+      <div class="language-links" aria-label="Language">
+        <button type="button" data-lang="zh-CN">简体中文</button>
+        <span>/</span>
+        <button type="button" data-lang="en-US">English</button>
+      </div>
     </aside>
 
     <main class="main-panel">
       <section id="rulesPanel" class="panel active">
         <header class="panel-header">
           <div>
-            <p class="eyebrow">WiFi 规则</p>
-            <h1>三步完成管控</h1>
+            <p class="eyebrow" data-i18n="rules">网络规则</p>
+            <h1 data-i18n="ruleIntro">三步完成管控</h1>
           </div>
           <div class="header-actions">
-            <button id="restoreAllShortcutsButton" class="ghost-button" type="button">一键恢复快捷方式</button>
-            <button id="addRuleButton" class="primary-button" type="button">新建规则</button>
+            <button id="restoreAllShortcutsButton" class="ghost-button" type="button" data-i18n="restoreAllShortcuts">一键恢复快捷方式</button>
+            <button id="addRuleButton" class="primary-button" type="button" data-i18n="addRule">新建规则</button>
           </div>
         </header>
 
@@ -53,7 +60,7 @@
           <div class="subhead-row">
             <div>
               <h2 id="ruleFormTitle">添加规则</h2>
-              <p class="muted">选择网络和软件组后，程序会替换软件组里选中的快捷方式。</p>
+              <p class="muted" data-i18n="ruleIntroMuted">选好网络和软件组后，程序会替换该软件组里选中的快捷方式。名称、图标和位置保持不变。</p>
             </div>
           </div>
 
@@ -61,16 +68,16 @@
             <label class="step-item">
               <span class="step-number">1</span>
               <span class="step-body">
-                <strong>选择需要管控的 WiFi</strong>
-                <select id="ruleWifiSelect"></select>
-                <input id="manualSsid" list="wifiOptions" placeholder="列表里没有时，手动输入 WiFi 名称">
+                <strong data-i18n="step1">选择需要管控的网络</strong>
+                <select id="ruleNetworkSelect"></select>
+                <input id="manualNetwork" list="networkOptions" data-i18n-placeholder="manualNetwork" placeholder="列表里没有时，手动输入网络名称或网卡名称">
               </span>
             </label>
 
             <label class="step-item">
               <span class="step-number">2</span>
               <span class="step-body">
-                <strong>选择黑名单软件组</strong>
+                <strong data-i18n="step2">选择黑名单软件组</strong>
                 <select id="ruleGroupSelect"></select>
               </span>
             </label>
@@ -78,10 +85,10 @@
             <div class="step-item confirm-step">
               <span class="step-number">3</span>
               <div class="step-body">
-                <strong>确定规则，后台运行</strong>
+                <strong data-i18n="step3">确定规则，后台运行</strong>
                 <div class="confirm-box">
-                  <div><span>WiFi</span><b id="summaryWifi">未选择</b></div>
-                  <div><span>软件组</span><b id="summaryGroup">未选择</b></div>
+                  <div><span data-i18n="network">网络</span><b id="summaryNetwork">未选择</b></div>
+                  <div><span data-i18n="softwareGroup">软件组</span><b id="summaryGroup">未选择</b></div>
                   <p id="summaryAction" class="muted">完成前两步后即可确定。</p>
                 </div>
                 <button id="saveRuleButton" class="primary-button" type="submit">确定规则并后台运行</button>
@@ -96,34 +103,34 @@
       <section id="groupsPanel" class="panel">
         <header class="panel-header">
           <div>
-            <p class="eyebrow">软件组</p>
-            <h1>快捷方式黑名单</h1>
+            <p class="eyebrow" data-i18n="softwareGroups">软件组</p>
+            <h1 data-i18n="groupsTitle">快捷方式黑名单</h1>
           </div>
-          <button id="newGroupButton" class="primary-button" type="button">新建软件组</button>
+          <button id="newGroupButton" class="primary-button" type="button" data-i18n="newGroup">新建软件组</button>
         </header>
 
         <section class="settings-card groups-card">
           <div class="subhead-row">
             <div>
-              <h2>软件组</h2>
-              <p class="muted">用系统文件浏览器选择要替换的 .lnk 快捷方式；名称、图标和位置都会沿用原快捷方式。</p>
+              <h2 data-i18n="softwareGroups">软件组</h2>
+              <p class="muted" data-i18n="groupsMuted">用系统文件浏览器选择需要替换的 .lnk 快捷方式；程序会沿用原快捷方式的名称、图标和位置。</p>
             </div>
           </div>
 
           <form id="groupForm" class="group-editor hidden">
             <h3 id="groupFormTitle">新建软件组</h3>
             <label>
-              <span>软件组名称</span>
-              <input id="groupName" placeholder="例如 娱乐软件">
+              <span data-i18n="groupName">软件组名称</span>
+              <input id="groupName" data-i18n-placeholder="groupNamePlaceholder" placeholder="例如 娱乐软件">
             </label>
             <label>
-              <span>组内快捷方式</span>
+              <span data-i18n="groupShortcuts">组内快捷方式</span>
               <div id="groupShortcutList" class="selected-shortcut-list"></div>
             </label>
             <div class="editor-actions">
-              <button class="ghost-button" type="button" id="browseGroupShortcuts">选择快捷方式</button>
-              <button class="ghost-button" type="button" id="cancelGroupEdit">取消</button>
-              <button class="primary-button" type="submit">保存软件组</button>
+              <button class="ghost-button" type="button" id="browseGroupShortcuts" data-i18n="chooseShortcuts">选择快捷方式</button>
+              <button class="ghost-button" type="button" id="cancelGroupEdit" data-i18n="cancel">取消</button>
+              <button class="primary-button" type="submit" data-i18n="saveGroup">保存软件组</button>
             </div>
           </form>
 
@@ -134,41 +141,41 @@
       <section id="passwordPanel" class="panel">
         <header class="panel-header">
           <div>
-            <p class="eyebrow">密码</p>
-            <h1>本次启动放行</h1>
+            <p class="eyebrow" data-i18n="password">密码</p>
+            <h1 data-i18n="passwordTitle">本次启动放行</h1>
           </div>
         </header>
         <form id="passwordForm" class="settings-card compact-card">
           <label>
-            <span>主密码</span>
-            <input id="bypassPassword" type="password" autocomplete="new-password" placeholder="输入新密码">
+            <span data-i18n="masterPassword">放行密码</span>
+            <input id="bypassPassword" type="password" autocomplete="new-password" data-i18n-placeholder="passwordPlaceholder" placeholder="输入新密码">
           </label>
-          <p class="muted">在提醒页输入密码后，只放行这一次启动。已经启动的程序不会被关闭，也不会开启全局倒计时。</p>
-          <button class="primary-button" type="submit">保存密码</button>
+          <p class="muted" data-i18n="passwordMuted">在提醒页输入密码后，只放行这一次启动；不需要设置允许时长，也不会开启全局倒计时。</p>
+          <button class="primary-button" type="submit" data-i18n="savePassword">保存密码</button>
         </form>
       </section>
 
       <section id="statsPanel" class="panel">
         <header class="panel-header">
           <div>
-            <p class="eyebrow">统计</p>
-            <h1>拦截记录</h1>
+            <p class="eyebrow" data-i18n="stats">统计</p>
+            <h1 data-i18n="stats">统计</h1>
           </div>
-          <button id="refreshStats" class="ghost-button">刷新</button>
+          <button id="refreshStats" class="ghost-button" data-i18n="refresh">刷新</button>
         </header>
         <div class="metric-grid">
-          <div class="metric"><span>今日拦截</span><strong id="blockedToday">0</strong></div>
-          <div class="metric"><span>本周拦截</span><strong id="blockedWeek">0</strong></div>
-          <div class="metric"><span>最常受限</span><strong id="topApp">暂无</strong></div>
+          <div class="metric"><span data-i18n="blockedToday">今日拦截</span><strong id="blockedToday">0</strong></div>
+          <div class="metric"><span data-i18n="blockedWeek">本周拦截</span><strong id="blockedWeek">0</strong></div>
+          <div class="metric"><span data-i18n="topApp">最常受限</span><strong id="topApp">暂无</strong></div>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>时间</th>
-                <th>WiFi</th>
-                <th>应用</th>
-                <th>结果</th>
+                <th data-i18n="time">时间</th>
+                <th data-i18n="network">网络</th>
+                <th data-i18n="app">软件</th>
+                <th data-i18n="result">结果</th>
               </tr>
             </thead>
             <tbody id="logRows"></tbody>
@@ -179,22 +186,23 @@
       <section id="aboutPanel" class="panel">
         <header class="panel-header">
           <div>
-            <p class="eyebrow">关于</p>
-            <h1>WiFi 提醒</h1>
+            <p class="eyebrow" data-i18n="about">关于</p>
+            <h1 data-i18n="appName">WiFi 提醒</h1>
           </div>
         </header>
         <div class="settings-card">
-          <p>版本 1.0.0</p>
-          <p>开源许可：MIT License</p>
-          <p>GitHub：<a href="https://github.com/SSRYLJRSS/wifi-warning" target="_blank" rel="noreferrer">SSRYLJRSS/wifi-warning</a></p>
-          <p class="muted">本地运行的 WiFi 场景提醒工具，配置与日志保存在当前 Windows 用户目录。</p>
+          <p data-i18n="version">版本 1.5.0</p>
+          <p data-i18n="license">开源许可：MIT License</p>
+          <p>GitHub: <a href="https://github.com/SSRYLJRSS/wifi-warning" target="_blank" rel="noreferrer">SSRYLJRSS/wifi-warning</a></p>
+          <p class="muted" data-i18n="aboutMuted">本地运行的 Windows 网络提醒工具。配置与日志保存在当前 Windows 用户目录。</p>
           <div class="path-line" id="configPath"></div>
         </div>
       </section>
     </main>
 
-    <datalist id="wifiOptions"></datalist>
+    <datalist id="networkOptions"></datalist>
     <div id="toast" class="toast hidden"></div>
+    <script src="/js/i18n.js"></script>
     <script src="/js/api.js"></script>
     <script src="/js/polling.js"></script>
     <script src="/js/settings.js"></script>

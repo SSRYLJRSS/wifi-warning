@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(wifi-warning VERSION 1.0.0 LANGUAGES CXX)
+project(wifi-warning VERSION 1.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN)
+add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0600)
 
 if(MINGW)
     add_compile_options(-ffunction-sections -fdata-sections -Os)
@@ -25,6 +25,7 @@ add_library(ww_core STATIC
     src/core/http_probe.cpp
     src/core/json.cpp
     src/core/logger.cpp
+    src/core/network_manager.cpp
     src/core/rule_engine.cpp
     src/core/shortcut_manager.cpp
     src/core/util.cpp
@@ -39,6 +40,7 @@ target_link_libraries(ww_core PUBLIC
     bcrypt
     comdlg32
     gdi32
+    iphlpapi
     psapi
     ole32
     shell32
@@ -61,7 +63,7 @@ add_executable(ww-launch WIN32
     src/ww-launch/main.cpp
     src/resources/ww-launch.rc
 )
-target_link_libraries(ww-launch PRIVATE shell32 wlanapi ws2_32)
+target_link_libraries(ww-launch PRIVATE iphlpapi shell32 wlanapi ws2_32)
 
 add_executable(ww-smoke
     tests/smoke.cpp

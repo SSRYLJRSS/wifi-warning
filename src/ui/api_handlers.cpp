@@ -1,6 +1,7 @@
 #include "ui/api_handlers.h"
 
 #include "core/auto_start.h"
+#include "core/network_manager.h"
 #include "core/shortcut_manager.h"
 #include "core/util.h"
 #include "core/wifi_detector.h"
@@ -52,6 +53,9 @@ bool ApiHandlers::handle(const HttpRequest& request, HttpResponse& response) {
     else if (request.path == "/api/wifi/current" && request.method == "GET") response = wifiCurrent();
     else if (request.path == "/api/wifi/available" && request.method == "GET") response = wifiAvailable();
     else if (request.path == "/api/wifi/switch" && request.method == "POST") response = wifiSwitch(request.body);
+    else if (request.path == "/api/network/current" && request.method == "GET") response = networkCurrent();
+    else if (request.path == "/api/network/wired" && request.method == "GET") response = wiredAdapters();
+    else if (request.path == "/api/network/wired/toggle" && request.method == "POST") response = wiredToggle(request.body);
     else if (request.path == "/api/stats" && request.method == "GET") response = stats();
     else if (request.path == "/api/bypass" && request.method == "POST") response = bypass(request.body);
     else if (request.path == "/api/apps/browse" && request.method == "POST") response = appBrowse();
@@ -158,6 +162,33 @@ HttpResponse ApiHandlers::wifiSwitch(const std::string& body) {
         {"password_supplied", !password.empty()},
         {"target_ssid", ssid}
     }, accepted ? 200 : 409);
+}
+
+HttpResponse ApiHandlers::networkCurrent() {
+    return jsonResponse(networkStatusJson(getCurrentNetwork()));
+}
+
+HttpResponse ApiHandlers::wiredAdapters() {
+    return jsonResponse(JsonValue::Object{
+        {"ok", true},
+        {"adapters", wiredAdaptersJson()}
+    });
+}
+
+HttpResponse ApiHandlers::wiredToggle(const std::string& body) {
+    JsonValue parsed = requestBodyJson(body);
+    std::string adapterId = parsed.get("id") ? parsed.get("id")->asString() : "";
+    bool enabled = parsed.get("enabled") ? parsed.get("enabled")->asBool(true) : true;
+    if (adapterId.empty()) return errorResponse("missing adapter id");
+
+    auto result = setWiredAdapterEnabled(adapterId, enabled);
+    LogRecord record;
+    record.timestamp = nowIsoLocal();
+    record.wifi_action = enabled ? "wired_enable_requested" : "wired_disable_requested";
+    record.target_ssid = adapterId;
+    record.error = result.error;
+    logger_.write(record);
+    return jsonResponse(networkActionJson(result), result.ok ? 200 : 409);
 }
 
 HttpResponse ApiHandlers::stats() {
@@ -634,6 +665,9 @@ HttpResponse ApiHandlers::appStatus() {
         rules.push_back(JsonValue::Object{
             {"rule_id", rule.id},
             {"ssid", rule.ssid},
+            {"network_type", rule.network_type.empty() ? "wifi" : rule.network_type},
+            {"network_id", rule.network_id.empty() ? rule.ssid : rule.network_id},
+            {"network_name", rule.network_name.empty() ? (rule.network_id.empty() ? rule.ssid : rule.network_id) : rule.network_name},
             {"apps", apps}
         });
     }

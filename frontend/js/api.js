@@ -9,10 +9,10 @@ const Api = {
     try {
       data = text ? JSON.parse(text) : {};
     } catch {
-      data = { ok: false, error: text || "响应解析失败" };
+      data = { ok: false, error: text || "Response parse failed" };
     }
     if (!response.ok || data.ok === false) {
-      throw new Error(data.error || `请求失败 ${response.status}`);
+      throw new Error(data.error || `Request failed ${response.status}`);
     }
     return data;
   },
@@ -40,6 +40,21 @@ const Api = {
     return this.request("/api/wifi/switch", {
       method: "POST",
       body: JSON.stringify(password ? { ssid, password } : { ssid })
+    });
+  },
+
+  currentNetwork() {
+    return this.request("/api/network/current");
+  },
+
+  wiredAdapters() {
+    return this.request("/api/network/wired");
+  },
+
+  toggleWired(id, enabled) {
+    return this.request("/api/network/wired/toggle", {
+      method: "POST",
+      body: JSON.stringify({ id, enabled })
     });
   },
 

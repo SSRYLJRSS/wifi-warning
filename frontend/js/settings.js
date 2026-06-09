@@ -2,6 +2,7 @@ let appConfig = null;
 let editingRuleId = null;
 let editingGroupId = null;
 let editingGroupApps = [];
+let networkOptions = [];
 const shortcutPreviews = new Map();
 const appPathStatus = new Map();
 
@@ -43,6 +44,24 @@ function appsSamePath(a, b) {
   return String(a || "").toLowerCase() === String(b || "").toLowerCase();
 }
 
+function networkKey(type, id) {
+  return `${type || "wifi"}:${id || ""}`;
+}
+
+function normalizeNetworkRule(rule) {
+  rule.network_type ||= "wifi";
+  rule.network_id ||= rule.ssid || "";
+  rule.network_name ||= rule.network_id || rule.ssid || "";
+  if (rule.network_type === "wifi" && !rule.ssid) rule.ssid = rule.network_id;
+}
+
+function displayNetwork(ruleOrOption) {
+  const type = ruleOrOption.network_type || ruleOrOption.type || "wifi";
+  const name = ruleOrOption.network_name || ruleOrOption.name || ruleOrOption.network_id || ruleOrOption.id || ruleOrOption.ssid || "";
+  const label = type === "wired" ? t("wired") : t("wifi");
+  return name ? `${label}: ${name}` : t("notSelected");
+}
+
 function setTab(tab) {
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === tab);
@@ -56,16 +75,19 @@ function normalizeConfig() {
   appConfig.settings ||= {};
   appConfig.rules ||= [];
   appConfig.app_groups ||= [];
+  appConfig.version = "1.5.0";
+  appConfig.settings.language ||= "zh-CN";
   appConfig.settings.bypass_timeout_minutes = 0;
   appConfig.settings.bypass_until_epoch = 0;
 
   const knownGroups = new Set(appConfig.app_groups.map((group) => group.id));
   for (const rule of appConfig.rules) {
+    normalizeNetworkRule(rule);
     rule.blocked_apps ||= [];
     if (rule.app_group_id && knownGroups.has(rule.app_group_id)) continue;
     if (!rule.blocked_apps.length) continue;
     const generatedId = `legacy_${rule.id || newGroupId()}`;
-    const generatedName = `${rule.ssid || "旧规则"} 的软件`;
+    const generatedName = t("oldRuleGroupName", { name: rule.network_name || rule.ssid || t("oldRule") });
     appConfig.app_groups.push({
       id: generatedId,
       name: generatedName,
@@ -93,7 +115,7 @@ function groupById(groupId) {
 }
 
 function groupName(groupId) {
-  return groupById(groupId)?.name || "未选择软件组";
+  return groupById(groupId)?.name || t("selectGroup");
 }
 
 function shortcutDisplayName(path) {
@@ -148,7 +170,7 @@ function mergeAppsWithExistingReplacements(ruleId, apps) {
 function renderGroupOptions() {
   const select = $("ruleGroupSelect");
   if (!select) return;
-  select.innerHTML = `<option value="">请选择软件组</option>` + (appConfig.app_groups || [])
+  select.innerHTML = `<option value="">${escapeHtml(t("selectGroup"))}</option>` + (appConfig.app_groups || [])
     .map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)} (${(group.apps || []).length})</option>`)
     .join("");
 }
@@ -162,12 +184,12 @@ function restoreCounts(result) {
 }
 
 function restoreMessage(counts) {
-  return counts.failed ? `已恢复 ${counts.ok} 个，${counts.failed} 个失败，可稍后重试` : `已恢复 ${counts.ok} 个快捷方式`;
+  return counts.failed ? t("restoredMixed", counts) : t("restoredOk", counts);
 }
 
 function renderGroupAppRows(group) {
   const apps = editingGroupId === group?.id ? editingGroupApps : (group?.apps || []);
-  if (!apps.length) return `<div class="empty-line">还没有添加软件。</div>`;
+  if (!apps.length) return `<div class="empty-line">${escapeHtml(t("noGroupApps"))}</div>`;
   return apps.map((app) => `
     <div class="software-row">
       <div class="software-icon">LNK</div>
@@ -176,7 +198,7 @@ function renderGroupAppRows(group) {
         <span>${escapeHtml(app.original_path)}</span>
         ${(app.shortcut_paths || []).map((path) => `<small>${escapeHtml(path)}</small>`).join("")}
       </div>
-      ${editingGroupId === group.id ? `<button class="icon-button danger-text" type="button" data-remove-app="${escapeHtml(app.original_path)}" title="移除">×</button>` : ""}
+      ${editingGroupId === group.id ? `<button class="icon-button danger-text" type="button" data-remove-app="${escapeHtml(app.original_path)}" title="${escapeHtml(t("remove"))}">×</button>` : ""}
     </div>
   `).join("");
 }
@@ -185,7 +207,7 @@ function renderGroups() {
   const list = $("appGroupsList");
   list.innerHTML = "";
   if (!appConfig.app_groups.length) {
-    list.innerHTML = `<div class="empty-line">还没有软件组。先新建一个，例如“娱乐软件”或“工作时黑名单”。</div>`;
+    list.innerHTML = `<div class="empty-line">${escapeHtml(t("noGroups"))}</div>`;
   } else {
     for (const group of appConfig.app_groups) {
       const card = document.createElement("article");
@@ -194,18 +216,18 @@ function renderGroups() {
         <header>
           <div>
             <h3>${escapeHtml(group.name)}</h3>
-            <p>${(group.apps || []).length} 个软件</p>
+            <p>${escapeHtml(t("appCount", { count: (group.apps || []).length }))}</p>
           </div>
           <div class="inline-actions">
-            <button class="ghost-button" data-action="edit-group">编辑</button>
-            <button class="ghost-button danger-text" data-action="delete-group">删除</button>
+            <button class="ghost-button" data-action="edit-group">${escapeHtml(t("edit"))}</button>
+            <button class="ghost-button danger-text" data-action="delete-group">${escapeHtml(t("delete"))}</button>
           </div>
         </header>
         <div class="software-list compact">${renderGroupAppRows(group)}</div>
       `;
       card.querySelector('[data-action="edit-group"]').addEventListener("click", () => startGroupEdit(group.id));
       card.querySelector('[data-action="delete-group"]').addEventListener("click", () => deleteGroup(group.id));
-      card.querySelectorAll('[data-remove-app]').forEach((button) => {
+      card.querySelectorAll("[data-remove-app]").forEach((button) => {
         button.addEventListener("click", () => {
           editingGroupApps = editingGroupApps.filter((app) => !appsSamePath(app.original_path, button.dataset.removeApp));
           renderEditingShortcutList();
@@ -223,7 +245,7 @@ function resetGroupForm() {
   editingGroupId = null;
   editingGroupApps = [];
   $("groupName").value = "";
-  $("groupFormTitle").textContent = "新建软件组";
+  $("groupFormTitle").textContent = t("newGroup");
   $("groupForm").classList.add("hidden");
   renderEditingShortcutList();
   renderGroups();
@@ -233,7 +255,7 @@ function startGroupEdit(groupId = "") {
   const group = groupId ? groupById(groupId) : null;
   editingGroupId = group?.id || "";
   editingGroupApps = (group?.apps || []).map(cloneApp);
-  $("groupFormTitle").textContent = group ? "编辑软件组" : "新建软件组";
+  $("groupFormTitle").textContent = group ? t("editGroup") : t("newGroup");
   $("groupName").value = group?.name || "";
   $("groupForm").classList.remove("hidden");
   renderEditingShortcutList();
@@ -245,8 +267,8 @@ async function deleteGroup(groupId) {
   const group = groupById(groupId);
   if (!group) return;
   const usedRules = appConfig.rules.filter((rule) => rule.app_group_id === groupId);
-  const detail = usedRules.length ? `\n有 ${usedRules.length} 条规则正在使用它，删除后这些规则也会一起删除并尝试还原快捷方式。` : "";
-  if (!confirm(`删除软件组“${group.name}”？${detail}`)) return;
+  const detail = usedRules.length ? `\n${t("deleteGroupUsed", { count: usedRules.length })}` : "";
+  if (!confirm(`${t("deleteGroupConfirm", { name: group.name })}${detail}`)) return;
 
   for (const rule of usedRules) {
     if ((rule.blocked_apps || []).some((app) => (app.replaced_shortcuts || []).length)) {
@@ -259,7 +281,7 @@ async function deleteGroup(groupId) {
         renderGroups();
         renderRules();
         await loadAppStatuses();
-        toast(`删除前有 ${counts.failed} 个快捷方式还原失败，已保留软件组`);
+        toast(t("restoredMixed", counts));
         return;
       }
     }
@@ -268,14 +290,14 @@ async function deleteGroup(groupId) {
   appConfig.rules = appConfig.rules.filter((rule) => rule.app_group_id !== groupId);
   appConfig.app_groups = appConfig.app_groups.filter((item) => item.id !== groupId);
   if (editingGroupId === groupId) resetGroupForm();
-  await saveConfig("软件组已删除");
+  await saveConfig(t("groupDeleted"));
 }
 
 function renderEditingShortcutList() {
   const list = $("groupShortcutList");
   if (!list) return;
   if (!editingGroupApps.length) {
-    list.innerHTML = `<div class="empty-line">还没有选择快捷方式。</div>`;
+    list.innerHTML = `<div class="empty-line">${escapeHtml(t("noEditingShortcuts"))}</div>`;
     return;
   }
   list.innerHTML = editingGroupApps.map((app) => `
@@ -286,7 +308,7 @@ function renderEditingShortcutList() {
         <span>${escapeHtml(app.original_path)}</span>
         ${(app.shortcut_paths || []).map((path) => `<small>${escapeHtml(path)}</small>`).join("")}
       </div>
-      <button class="icon-button danger-text" type="button" data-remove-editing-app="${escapeHtml(app.original_path)}" title="移除">×</button>
+      <button class="icon-button danger-text" type="button" data-remove-editing-app="${escapeHtml(app.original_path)}" title="${escapeHtml(t("remove"))}">×</button>
     </div>
   `).join("");
   list.querySelectorAll("[data-remove-editing-app]").forEach((button) => {
@@ -303,11 +325,11 @@ async function saveGroupFromForm(event) {
   const name = $("groupName").value.trim();
   const apps = editingGroupApps.map(cloneApp);
   if (!name) {
-    toast("请填写软件组名称");
+    toast(t("groupNameRequired"));
     return;
   }
   if (!apps.length) {
-    toast("请至少选择一个快捷方式");
+    toast(t("groupAppsRequired"));
     return;
   }
 
@@ -328,7 +350,7 @@ async function saveGroupFromForm(event) {
     rule.blocked_apps = mergeAppsWithExistingReplacements(rule.id, group.apps);
   }
 
-  await saveConfig("软件组已保存");
+  await saveConfig(t("groupSaved"));
   resetGroupForm();
   for (const ruleId of usedRuleIds) {
     await replaceRuleShortcuts(ruleId);
@@ -343,19 +365,19 @@ function appendGroupShortcuts(shortcuts) {
 
 function renderRuleApps(rule) {
   const apps = rule.blocked_apps || [];
-  if (!apps.length) return `<div class="app-status-list muted">暂无受限应用。</div>`;
+  if (!apps.length) return `<div class="app-status-list muted">${escapeHtml(t("none"))}</div>`;
   const rows = apps.map((app) => {
     const status = statusForApp(rule.id, app);
     const missing = status?.missing === true;
-    const label = missing ? "已丢失" : (status ? "就绪" : "检查中");
+    const label = missing ? t("missing") : (status ? t("ready") : t("checking"));
     return `
       <div class="app-status-row ${missing ? "missing" : ""}">
         <div>
           <strong>${escapeHtml(app.name || app.original_path)}</strong>
           <span>${escapeHtml(app.original_path)}</span>
         </div>
-        <span class="app-status-badge">${label}</span>
-        ${missing ? `<button class="ghost-button danger-text" data-action="cleanup-app" data-app-path="${escapeHtml(app.original_path)}">清理</button>` : ""}
+        <span class="app-status-badge">${escapeHtml(label)}</span>
+        ${missing ? `<button class="ghost-button danger-text" data-action="cleanup-app" data-app-path="${escapeHtml(app.original_path)}">${escapeHtml(t("cleanup"))}</button>` : ""}
       </div>
     `;
   }).join("");
@@ -365,7 +387,7 @@ function renderRuleApps(rule) {
 function renderShortcutPreview(ruleId) {
   const preview = shortcutPreviews.get(ruleId);
   if (!preview) return "";
-  if (preview.loading) return `<div class="shortcut-preview muted">正在扫描快捷方式...</div>`;
+  if (preview.loading) return `<div class="shortcut-preview muted">${escapeHtml(t("scanning"))}</div>`;
 
   const rows = (preview.items || []).map((item) => `
     <div class="shortcut-row ${item.ok === false ? "failed" : ""}">
@@ -376,8 +398,8 @@ function renderShortcutPreview(ruleId) {
 
   return `
     <div class="shortcut-preview" data-preview-for="${escapeHtml(ruleId)}">
-      <div class="preview-title">${escapeHtml(preview.message || `发现 ${preview.count || 0} 个可替换快捷方式`)}</div>
-      ${rows || `<div class="shortcut-row muted">未发现指向这些应用的快捷方式。</div>`}
+      <div class="preview-title">${escapeHtml(preview.message || t("scanDone", { count: preview.count || 0 }))}</div>
+      ${rows || `<div class="shortcut-row muted">${escapeHtml(t("noShortcutFound"))}</div>`}
     </div>
   `;
 }
@@ -386,34 +408,35 @@ function renderRules() {
   const list = $("rulesList");
   list.innerHTML = "";
   if (!appConfig.rules.length) {
-    list.innerHTML = `<div class="settings-card muted">暂无规则。按上面的三步选择 WiFi、软件组，然后确定。</div>`;
+    list.innerHTML = `<div class="settings-card muted">${escapeHtml(t("noRules"))}</div>`;
     renderRuleSummary();
     return;
   }
 
   for (const rule of appConfig.rules) {
+    normalizeNetworkRule(rule);
     const card = document.createElement("article");
     card.className = "rule-card";
     const shortcutCount = (rule.blocked_apps || []).reduce((sum, app) => sum + (app.replaced_shortcuts || []).length, 0);
     card.innerHTML = `
       <header>
         <div>
-          <h2>${escapeHtml(rule.ssid)}</h2>
+          <h2>${escapeHtml(displayNetwork(rule))}</h2>
           <div class="pill-row">
-            <span class="pill">软件组: ${escapeHtml(groupName(rule.app_group_id))}</span>
-            <span class="pill">${(rule.blocked_apps || []).length} 个软件</span>
-            <span class="pill">已替换 ${shortcutCount} 个快捷方式</span>
+            <span class="pill">${escapeHtml(t("softwareGroup"))}: ${escapeHtml(groupName(rule.app_group_id))}</span>
+            <span class="pill">${escapeHtml(t("appCount", { count: (rule.blocked_apps || []).length }))}</span>
+            <span class="pill">${escapeHtml(t("replacedShortcuts", { count: shortcutCount }))}</span>
           </div>
         </div>
       </header>
-      <p class="muted">在这个 WiFi 下，点击这些软件的原快捷方式会先进入提醒页。</p>
+      <p class="muted">${escapeHtml(t("ruleMuted"))}</p>
       ${renderRuleApps(rule)}
       ${renderShortcutPreview(rule.id)}
       <div class="rule-actions">
-        <button class="ghost-button" data-action="edit">编辑</button>
-        <button class="ghost-button" data-action="scan">扫描快捷方式</button>
-        <button class="ghost-button" data-action="replace">重新替换</button>
-        <button class="ghost-button danger-text" data-action="delete">删除</button>
+        <button class="ghost-button" data-action="edit">${escapeHtml(t("edit"))}</button>
+        <button class="ghost-button" data-action="scan">${escapeHtml(t("scanShortcuts"))}</button>
+        <button class="ghost-button" data-action="replace">${escapeHtml(t("replaceAgain"))}</button>
+        <button class="ghost-button danger-text" data-action="delete">${escapeHtml(t("delete"))}</button>
       </div>
     `;
     card.querySelector('[data-action="edit"]').addEventListener("click", () => startRuleEdit(rule.id));
@@ -428,53 +451,70 @@ function renderRules() {
   renderRuleSummary();
 }
 
+function selectedNetwork() {
+  const manual = $("manualNetwork").value.trim();
+  if (manual) {
+    const matched = networkOptions.find((item) => {
+      return String(item.id || "").toLowerCase() === manual.toLowerCase()
+        || String(item.name || "").toLowerCase() === manual.toLowerCase();
+    });
+    if (matched) return matched;
+    return {
+      type: "wifi",
+      id: manual,
+      name: manual,
+      manual: true
+    };
+  }
+  const selected = $("ruleNetworkSelect").value;
+  return networkOptions.find((item) => item.key === selected) || null;
+}
+
 function resetRuleForm() {
   editingRuleId = null;
-  $("ruleWifiSelect").value = "";
-  $("manualSsid").value = "";
+  $("ruleNetworkSelect").value = "";
+  $("manualNetwork").value = "";
   $("ruleGroupSelect").value = "";
-  $("ruleFormTitle").textContent = "添加规则";
-  $("saveRuleButton").textContent = "确定规则并后台运行";
+  $("ruleFormTitle").textContent = t("addRule");
+  $("saveRuleButton").textContent = t("saveRule");
   renderRuleSummary();
 }
 
 function startRuleEdit(ruleId) {
   const rule = appConfig.rules.find((item) => item.id === ruleId);
   if (!rule) return;
+  normalizeNetworkRule(rule);
   editingRuleId = rule.id;
-  $("ruleFormTitle").textContent = "编辑规则";
-  $("saveRuleButton").textContent = "保存规则并重新替换";
-  const optionExists = Array.from($("ruleWifiSelect").options).some((option) => option.value === rule.ssid);
-  $("ruleWifiSelect").value = optionExists ? rule.ssid : "";
-  $("manualSsid").value = optionExists ? "" : rule.ssid;
+  $("ruleFormTitle").textContent = t("editRule");
+  $("saveRuleButton").textContent = t("saveEditedRule");
+  const key = networkKey(rule.network_type, rule.network_id);
+  const optionExists = networkOptions.some((option) => option.key === key);
+  $("ruleNetworkSelect").value = optionExists ? key : "";
+  $("manualNetwork").value = optionExists ? "" : (rule.network_name || rule.network_id || rule.ssid);
   $("ruleGroupSelect").value = rule.app_group_id || "";
-  $("ruleWifiSelect").focus();
+  $("ruleNetworkSelect").focus();
   renderRuleSummary();
 }
 
-function selectedSsid() {
-  return $("manualSsid").value.trim() || $("ruleWifiSelect").value.trim();
-}
-
 function renderRuleSummary() {
-  const ssid = selectedSsid();
+  const network = selectedNetwork();
   const group = groupById($("ruleGroupSelect")?.value || "");
-  $("summaryWifi").textContent = ssid || "未选择";
-  $("summaryGroup").textContent = group ? `${group.name}（${(group.apps || []).length} 个软件）` : "未选择";
-  $("summaryAction").textContent = ssid && group ? "确定后会替换软件组里选中的快捷方式，并保持后台防护。" : "完成前两步后即可确定。";
+  $("summaryNetwork").textContent = network ? displayNetwork(network) : t("notSelected");
+  $("summaryGroup").textContent = group ? t("groupWithCount", { name: group.name, count: (group.apps || []).length }) : t("notSelected");
+  $("summaryAction").textContent = network && group ? t("summaryReady") : t("summaryWaiting");
 }
 
 async function saveRuleFromForm(event) {
   event.preventDefault();
-  const ssid = selectedSsid();
+  const network = selectedNetwork();
   const groupId = $("ruleGroupSelect").value;
   const group = groupById(groupId);
-  if (!ssid) {
-    toast("请先选择需要管控的 WiFi");
+  if (!network || !network.id) {
+    toast(t("chooseNetworkFirst"));
     return;
   }
   if (!group || !(group.apps || []).length) {
-    toast("请先选择有软件的软件组");
+    toast(t("chooseGroupFirst"));
     return;
   }
 
@@ -482,12 +522,15 @@ async function saveRuleFromForm(event) {
   const existingRule = appConfig.rules.find((item) => item.id === ruleId);
   const rule = {
     id: ruleId,
-    ssid,
+    ssid: network.type === "wifi" ? network.id : "",
+    network_type: network.type,
+    network_id: network.id,
+    network_name: network.name || network.id,
     app_group_id: group.id,
     blocked_apps: mergeAppsWithExistingReplacements(ruleId, group.apps),
     safe_wifi_ssid: existingRule?.safe_wifi_ssid || "",
     safe_wifi_password: existingRule?.safe_wifi_password || "",
-    description: `${ssid} 使用 ${group.name}`
+    description: `${displayNetwork(network)} -> ${group.name}`
   };
 
   const index = appConfig.rules.findIndex((item) => item.id === rule.id);
@@ -495,7 +538,7 @@ async function saveRuleFromForm(event) {
   else appConfig.rules.push(rule);
 
   appConfig.settings.protection_enabled = true;
-  await saveConfig("规则已保存，正在替换快捷方式");
+  await saveConfig(t("ruleSaved"));
   resetRuleForm();
   await replaceRuleShortcuts(rule.id);
 }
@@ -515,26 +558,26 @@ async function replaceRuleShortcuts(ruleId) {
         app: app.name || app.original_path,
         ok: item.ok,
         path: item.shortcut,
-        message: item.ok ? item.shortcut : (item.error || item.shortcut || "替换失败")
+        message: item.ok ? item.shortcut : (item.error || item.shortcut || "Failed")
       });
     }
   }
   shortcutPreviews.set(ruleId, {
     count: total,
-    message: `替换完成: 成功 ${total} 个`,
+    message: t("replaceDone", { count: total }),
     items: resultItems
   });
   applySettings();
   renderGroups();
   renderRules();
   loadAppStatuses().catch(() => {});
-  toast(`已替换 ${total} 个快捷方式`);
+  toast(t("replaceDone", { count: total }));
 }
 
 async function deleteRule(ruleId) {
   const rule = appConfig.rules.find((item) => item.id === ruleId);
   if (!rule) return;
-  if (!confirm(`删除 ${rule.ssid} 的规则？已替换的快捷方式会先尝试还原。`)) return;
+  if (!confirm(t("deleteRuleConfirm", { name: displayNetwork(rule) }))) return;
   if ((rule.blocked_apps || []).some((app) => (app.replaced_shortcuts || []).length)) {
     const restored = await Api.restoreShortcuts(ruleId);
     appConfig = restored.config || appConfig;
@@ -545,17 +588,17 @@ async function deleteRule(ruleId) {
       renderGroups();
       renderRules();
       await loadAppStatuses();
-      toast(`删除前有 ${counts.failed} 个快捷方式还原失败，已保留规则`);
+      toast(t("restoredMixed", counts));
       return;
     }
   }
   appConfig.rules = appConfig.rules.filter((item) => item.id !== ruleId);
   shortcutPreviews.delete(ruleId);
-  await saveConfig("规则已删除");
+  await saveConfig(t("ruleDeleted"));
 }
 
 async function restoreAllShortcutsFromUi() {
-  if (!confirm("恢复所有已替换的快捷方式？规则会保留，但这些快捷方式会回到原始启动方式。")) return;
+  if (!confirm(t("shortcutRestoreConfirm"))) return;
   try {
     const result = await Api.restoreShortcuts();
     appConfig = result.config || appConfig;
@@ -592,8 +635,8 @@ async function cleanupMissingApp(ruleId, appPath) {
     const group = rule ? groupById(rule.app_group_id) : null;
     if (group) group.apps = (group.apps || []).filter((app) => !appsSamePath(app.original_path, appPath));
     await loadAppStatuses();
-    await saveConfig("已清理丢失的应用记录");
-    toast("已清理丢失的应用记录");
+    await saveConfig(t("toastSaved"));
+    toast(t("toastSaved"));
   } catch (error) {
     toast(error.message);
   }
@@ -612,7 +655,7 @@ async function scanRuleShortcuts(ruleId) {
     if (!shortcuts.length) {
       items.push({
         app: app.name || app.original_path,
-        message: "未发现快捷方式",
+        message: t("noShortcutFound"),
         ok: true
       });
       continue;
@@ -630,24 +673,25 @@ async function scanRuleShortcuts(ruleId) {
   const count = items.filter((item) => item.path).length;
   shortcutPreviews.set(ruleId, {
     count,
-    message: `扫描完成: 发现 ${count} 个快捷方式`,
+    message: t("scanDone", { count }),
     items
   });
   renderRules();
-  toast(`发现 ${count} 个快捷方式`);
+  toast(t("scanDone", { count }));
 }
 
-async function saveConfig(message = "已保存") {
+async function saveConfig(message = t("toastSaved")) {
   normalizeConfig();
   const result = await Api.saveConfig(appConfig);
   appConfig = result.config;
   normalizeConfig();
+  applyLanguage(appConfig.settings.language);
   applySettings();
   renderGroups();
   renderRules();
   loadAppStatuses().catch(() => {});
   if (appConfig.settings.auto_start && result.auto_start_synced === false) {
-    toast(result.auto_start_error ? `启动项更新失败：${result.auto_start_error}` : "启动项更新失败");
+    toast(result.auto_start_error || "Failed to update startup entry");
   } else {
     toast(message);
   }
@@ -663,28 +707,72 @@ function applySettings() {
 function actionLabel(row) {
   const key = row.action || row.wifi_action || "";
   const labels = {
-    blocked: "已阻止",
-    bypassed: "已允许本次启动",
-    shortcut_restored: "快捷方式已还原",
-    shortcut_restore_failed: "快捷方式还原失败",
-    shortcut_replace_failed: "快捷方式替换失败",
-    config_repaired: "配置已修复",
-    protection_disabled_no_adapter: "未检测到适配器，已关闭防护",
-    switched_to: "已切换网络",
-    connect_requested: "已请求切换网络",
-    native_dialog_opened: "已打开系统连接窗口",
-    switch_failed: "切换失败"
+    blocked: t("actionBlocked"),
+    bypassed: t("actionBypassed"),
+    shortcut_restored: t("actionShortcutRestored"),
+    shortcut_restore_failed: t("actionShortcutRestoreFailed"),
+    shortcut_replace_failed: t("actionShortcutReplaceFailed"),
+    config_repaired: t("actionConfigRepaired"),
+    protection_disabled_no_adapter: t("actionNoAdapter"),
+    switched_to: t("actionSwitched"),
+    connect_requested: t("actionConnectRequested"),
+    native_dialog_opened: t("actionDialogOpened"),
+    switch_failed: t("actionSwitchFailed"),
+    wired_disable_requested: t("actionWiredDisabled"),
+    wired_enable_requested: t("actionWiredEnabled")
   };
   return labels[key] || key;
 }
 
-async function loadWifiOptions() {
-  const data = await Api.availableWifi();
-  const names = new Set([...(data.known_profiles || []), ...(data.networks || []).map((item) => item.ssid)]);
-  const options = [...names].filter(Boolean);
-  $("wifiOptions").innerHTML = options.map((name) => `<option value="${escapeHtml(name)}"></option>`).join("");
-  $("ruleWifiSelect").innerHTML = `<option value="">请选择 WiFi</option>` + options
-    .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+async function loadNetworkOptions() {
+  const [wifiData, wiredData, currentData] = await Promise.all([
+    Api.availableWifi().catch(() => ({ networks: [], known_profiles: [] })),
+    Api.wiredAdapters().catch(() => ({ adapters: [] })),
+    Api.currentNetwork().catch(() => ({}))
+  ]);
+  const options = [];
+  const seen = new Set();
+  const addOption = (option) => {
+    if (!option.id) return;
+    const key = networkKey(option.type, option.id);
+    if (seen.has(key)) return;
+    seen.add(key);
+    options.push({ ...option, key });
+  };
+
+  for (const name of wifiData.known_profiles || []) {
+    addOption({ type: "wifi", id: name, name });
+  }
+  for (const network of wifiData.networks || []) {
+    addOption({
+      type: "wifi",
+      id: network.ssid,
+      name: network.ssid,
+      connected: network.connected
+    });
+  }
+  for (const adapter of wiredData.adapters || []) {
+    addOption({
+      type: "wired",
+      id: adapter.id,
+      name: adapter.name || adapter.id,
+      connected: adapter.connected,
+      status: adapter.status
+    });
+  }
+  if (currentData?.id) {
+    addOption({
+      type: currentData.type || "wifi",
+      id: currentData.id,
+      name: currentData.name || currentData.id,
+      connected: currentData.connected
+    });
+  }
+
+  networkOptions = options;
+  $("networkOptions").innerHTML = options.map((item) => `<option value="${escapeHtml(item.name || item.id)}"></option>`).join("");
+  $("ruleNetworkSelect").innerHTML = `<option value="">${escapeHtml(t("selectNetwork"))}</option>` + options
+    .map((item) => `<option value="${escapeHtml(item.key)}">${escapeHtml(displayNetwork(item))}${item.connected ? ` (${escapeHtml(t("current"))})` : ""}</option>`)
     .join("");
   renderRuleSummary();
 }
@@ -694,7 +782,7 @@ async function loadStats() {
   const stats = data.stats || {};
   $("blockedToday").textContent = stats.blocked_today || 0;
   $("blockedWeek").textContent = stats.blocked_week || 0;
-  $("topApp").textContent = stats.top_blocked_app || "暂无";
+  $("topApp").textContent = stats.top_blocked_app || t("none");
   $("logRows").innerHTML = (stats.records || []).slice(-80).reverse().map((row) => `
     <tr>
       <td>${escapeHtml(row.timestamp || "")}</td>
@@ -705,21 +793,55 @@ async function loadStats() {
   `).join("");
 }
 
+function applyLanguage(lang) {
+  I18N.setLanguage(lang);
+  $("ruleFormTitle").textContent = editingRuleId ? t("editRule") : t("addRule");
+  $("saveRuleButton").textContent = editingRuleId ? t("saveEditedRule") : t("saveRule");
+  $("groupFormTitle").textContent = editingGroupId ? t("editGroup") : t("newGroup");
+  renderGroupOptions();
+  renderEditingShortcutList();
+  renderGroups();
+  renderRules();
+  renderRuleSummary();
+  loadNetworkOptions().catch(() => {});
+  if ($("statsPanel").classList.contains("active")) loadStats().catch(() => {});
+}
+
+function networkStatusText(network) {
+  if (network.adapter_available === false) return t("currentNoAdapter");
+  if (!network.connected || !network.id) return t("currentNoNetwork");
+  return `${t("connected")} ${displayNetwork({
+    type: network.type,
+    id: network.id,
+    name: network.name || network.id
+  })}`;
+}
+
 async function init() {
   const data = await Api.getConfig();
   appConfig = data.config;
   normalizeConfig();
   $("configPath").textContent = data.config_path || "";
+  applyLanguage(currentLanguageFromConfig(appConfig));
   applySettings();
   renderGroups();
   renderRules();
   loadAppStatuses().catch(() => {});
-  loadWifiOptions().catch(() => {});
+  loadNetworkOptions().catch(() => {});
 
   if (location.hash === "#stats") setTab("stats");
 
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => setTab(button.dataset.tab));
+  });
+
+  document.querySelectorAll("[data-lang]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const lang = button.dataset.lang;
+      appConfig.settings.language = lang;
+      applyLanguage(lang);
+      await saveConfig(t("toastSaved"));
+    });
   });
 
   $("newGroupButton").addEventListener("click", () => startGroupEdit(""));
@@ -731,7 +853,7 @@ async function init() {
       if (result.cancelled) return;
       const shortcuts = (result.shortcuts || []).filter((shortcut) => shortcut.target_path);
       appendGroupShortcuts(shortcuts);
-      toast(`已选择 ${shortcuts.length} 个快捷方式`);
+      toast(t("selectedShortcuts", { count: shortcuts.length }));
     } catch (error) {
       toast(error.message);
     }
@@ -739,13 +861,13 @@ async function init() {
 
   $("addRuleButton").addEventListener("click", resetRuleForm);
   $("restoreAllShortcutsButton").addEventListener("click", restoreAllShortcutsFromUi);
-  $("ruleWifiSelect").addEventListener("change", renderRuleSummary);
-  $("manualSsid").addEventListener("input", renderRuleSummary);
+  $("ruleNetworkSelect").addEventListener("change", renderRuleSummary);
+  $("manualNetwork").addEventListener("input", renderRuleSummary);
   $("ruleGroupSelect").addEventListener("change", renderRuleSummary);
   $("ruleForm").addEventListener("submit", saveRuleFromForm);
 
   $("protectionToggle").addEventListener("change", async (event) => {
-    let message = event.target.checked ? "防护已开启" : "防护已关闭，快捷方式已尝试还原";
+    let message = event.target.checked ? t("protectionOn") : t("protectionOff");
     appConfig.settings.protection_enabled = event.target.checked;
     if (!event.target.checked) {
       const restored = await Api.restoreShortcuts();
@@ -758,11 +880,11 @@ async function init() {
   });
   $("autoStartToggle").addEventListener("change", async (event) => {
     appConfig.settings.auto_start = event.target.checked;
-    await saveConfig("启动项已更新");
+    await saveConfig(t("autostartSaved"));
   });
   $("darkToggle").addEventListener("change", async (event) => {
     appConfig.settings.dark_mode = event.target.checked;
-    await saveConfig("主题已更新");
+    await saveConfig(t("themeSaved"));
   });
 
   $("passwordForm").addEventListener("submit", async (event) => {
@@ -775,12 +897,12 @@ async function init() {
     appConfig.settings.bypass_timeout_minutes = 0;
     appConfig.settings.bypass_until_epoch = 0;
     $("bypassPassword").value = "";
-    await saveConfig("密码已保存");
+    await saveConfig(t("passwordSaved"));
   });
 
   $("refreshStats").addEventListener("click", loadStats);
-  startWifiPolling((wifi) => {
-    $("currentSsid").textContent = wifi.adapter_available === false ? "未检测到 WiFi 适配器" : (wifi.ssid ? `已连接 ${wifi.ssid}` : "未连接");
+  startNetworkPolling((network) => {
+    $("currentSsid").textContent = networkStatusText(network);
   }, 5000);
 }
 

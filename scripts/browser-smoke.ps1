@@ -56,7 +56,7 @@ New-SmokeShortcut -Path $runtimeShortcutPath -Target $fakeAppPath -Description "
 New-SmokeShortcut -Path $crudShortcutPath -Target $fakeAppPath -Description "CRUD smoke shortcut"
 
 $config = @{
-  version = "1.0.0"
+  version = "1.5.0"
   settings = @{
     auto_start = $false
     protection_enabled = $true
@@ -93,6 +93,9 @@ $config = @{
     @{
       id = "runtime_rule"
       ssid = "Office-WiFi"
+      network_type = "wifi"
+      network_id = "Office-WiFi"
+      network_name = "Office-WiFi"
       app_group_id = "runtime_group"
       safe_wifi_ssid = "Home-WiFi"
       safe_wifi_password = "safe-secret"
@@ -130,6 +133,8 @@ if ($null -ne $psi.Environment) {
   $psi.Environment["APPDATA"] = $appData
   $psi.Environment["WW_TEST_CURRENT_SSID_FILE"] = $ssidPath
   $psi.Environment["WW_TEST_AVAILABLE_WIFI_JSON"] = '[{"ssid":"Office-WiFi","signal_quality":80,"connected":true,"secure":true,"auth":"WPA2-PSK"},{"ssid":"Home-WiFi","signal_quality":93,"connected":false,"secure":true,"auth":"WPA2-PSK"}]'
+  $psi.Environment["WW_TEST_WIRED_ADAPTERS_JSON"] = '[{"id":"Ethernet 1","name":"Ethernet 1","connected":true,"enabled":true,"status":"up"}]'
+  $psi.Environment["WW_TEST_WIRED_ACTION"] = "success"
   $psi.Environment["WW_TEST_CONNECT_WIFI"] = "password:Home-WiFi:safe-secret;Home-WiFi"
   $psi.Environment["WW_TEST_AUTOSTART_RUN_KEY"] = $autoStartRunKey
   $psi.Environment["WW_TEST_PICK_SHORTCUTS_JSON"] = ConvertTo-Json @($crudShortcutPath) -Compress
@@ -137,6 +142,8 @@ if ($null -ne $psi.Environment) {
   $psi.EnvironmentVariables["APPDATA"] = $appData
   $psi.EnvironmentVariables["WW_TEST_CURRENT_SSID_FILE"] = $ssidPath
   $psi.EnvironmentVariables["WW_TEST_AVAILABLE_WIFI_JSON"] = '[{"ssid":"Office-WiFi","signal_quality":80,"connected":true,"secure":true,"auth":"WPA2-PSK"},{"ssid":"Home-WiFi","signal_quality":93,"connected":false,"secure":true,"auth":"WPA2-PSK"}]'
+  $psi.EnvironmentVariables["WW_TEST_WIRED_ADAPTERS_JSON"] = '[{"id":"Ethernet 1","name":"Ethernet 1","connected":true,"enabled":true,"status":"up"}]'
+  $psi.EnvironmentVariables["WW_TEST_WIRED_ACTION"] = "success"
   $psi.EnvironmentVariables["WW_TEST_CONNECT_WIFI"] = "password:Home-WiFi:safe-secret;Home-WiFi"
   $psi.EnvironmentVariables["WW_TEST_AUTOSTART_RUN_KEY"] = $autoStartRunKey
   $psi.EnvironmentVariables["WW_TEST_PICK_SHORTCUTS_JSON"] = ConvertTo-Json @($crudShortcutPath) -Compress

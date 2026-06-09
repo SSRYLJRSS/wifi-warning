@@ -1,6 +1,7 @@
 #include "core/auto_start.h"
 #include "core/config_manager.h"
 #include "core/logger.h"
+#include "core/network_manager.h"
 #include "core/shortcut_manager.h"
 #include "core/util.h"
 #include "core/wifi_detector.h"
@@ -107,7 +108,7 @@ static void addStartupNotices(ww::TrayIcon& tray, const ww::ConfigLoadStatus& co
     }
     if (disabledForNoAdapter) {
         tray.addStartupNotice(
-            L"\u672a\u68c0\u6d4b\u5230 WiFi \u9002\u914d\u5668",
+            L"\u672a\u68c0\u6d4b\u5230\u7f51\u7edc\u9002\u914d\u5668",
             L"\u5df2\u5173\u95ed\u9632\u62a4\u5e76\u5c1d\u8bd5\u8fd8\u539f\u5feb\u6377\u65b9\u5f0f\u3002");
     }
 }
@@ -152,14 +153,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     }
 
     bool disabledForNoAdapter = false;
-    auto startupWifi = ww::getCurrentWifi();
-    if (ww::isNoWifiAdapter(startupWifi) && config.settings.protection_enabled) {
+    auto startupNetwork = ww::getCurrentNetwork();
+    if (ww::isNoNetworkAdapter(startupNetwork) && config.settings.protection_enabled) {
         restoreAllAndSave(configManager, logger);
         config = configManager.load();
         ww::LogRecord record;
         record.timestamp = ww::nowIsoLocal();
         record.action = "protection_disabled_no_adapter";
-        record.error = startupWifi.error;
+        record.error = startupNetwork.error;
         logger.write(record);
         disabledForNoAdapter = true;
     }

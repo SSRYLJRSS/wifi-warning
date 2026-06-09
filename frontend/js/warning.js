@@ -1,11 +1,17 @@
 const query = params();
-let initialSsid = query.ssid || "";
+let initialNetworkType = query.networkType || (query.ssid ? "wifi" : "");
+let initialNetworkId = query.networkId || query.ssid || "";
 let rule = null;
 let appPath = query.app || "";
 let appArgs = query.appArgs || "";
 
 function text(id, value) {
   document.getElementById(id).textContent = value;
+}
+
+function networkLabel(type, name) {
+  const prefix = type === "wired" ? t("wired") : t("wifi");
+  return name ? `${prefix}: ${name}` : t("unknown");
 }
 
 function loadAppIcon() {
@@ -24,28 +30,57 @@ function loadAppIcon() {
   icon.src = Api.appIconUrl(appPath);
 }
 
-async function initWarning() {
-  text("appName", query.appName || (appPath.split(/[\\/]/).pop() || "应用"));
-  text("ssid", initialSsid || "未知");
-
-  loadAppIcon();
-  const configData = await Api.getConfig();
-  const config = configData.config;
-  rule = (config.rules || []).find((item) => item.id === query.ruleId);
-  text("ruleDescription", rule?.description || "当前网络限制该应用启动");
+async function configurePrimaryAction() {
+  const button = document.getElementById("switchSafe");
+  const ruleType = rule?.network_type || initialNetworkType || "wifi";
+  if (ruleType === "wired") {
+    const adapterId = rule?.network_id || initialNetworkId;
+    const adapterName = rule?.network_name || adapterId;
+    button.disabled = !adapterId;
+    button.textContent = t("wiredDisconnect");
+    button.onclick = async () => {
+      if (!adapterId) return;
+      try {
+        await Api.toggleWired(adapterId, false);
+        toast(t("wiredActionRequested", { action: t("disconnect"), name: adapterName }));
+      } catch (error) {
+        toast(error.message);
+      }
+    };
+    return;
+  }
 
   const safe = rule?.safe_wifi_ssid || "";
-  document.getElementById("switchSafe").textContent = safe ? `切换到 ${safe}` : "未设置安全网络";
-  document.getElementById("switchSafe").disabled = !safe;
-  document.getElementById("switchSafe").addEventListener("click", async () => {
+  button.textContent = safe ? t("switchSafe", { name: safe }) : t("noSafeNetwork");
+  button.disabled = !safe;
+  button.onclick = async () => {
     if (!safe) return;
     try {
       await Api.switchWifi(safe, rule?.safe_wifi_password || "");
-      toast("已请求切换网络");
+      toast(t("requestSwitch"));
     } catch (error) {
       toast(error.message);
     }
-  });
+  };
+}
+
+async function initWarning() {
+  const configData = await Api.getConfig();
+  const config = configData.config || {};
+  I18N.setLanguage(currentLanguageFromConfig(config));
+
+  text("appName", query.appName || (appPath.split(/[\\/]/).pop() || t("app")));
+  text("ssid", networkLabel(initialNetworkType, initialNetworkId));
+
+  loadAppIcon();
+  rule = (config.rules || []).find((item) => item.id === query.ruleId);
+  if (rule) {
+    rule.network_type ||= rule.ssid ? "wifi" : initialNetworkType;
+    rule.network_id ||= rule.ssid || initialNetworkId;
+    rule.network_name ||= rule.network_id;
+  }
+  text("ruleDescription", rule?.description || t("warningRuleFallback"));
+  await configurePrimaryAction();
 
   document.getElementById("pickWifi").addEventListener("click", () => {
     window.open("/wifi-picker", "wifi-picker", "width=760,height=680");
@@ -65,17 +100,18 @@ async function initWarning() {
         app_args: appArgs,
         rule_id: query.ruleId
       });
-      toast("已允许启动");
+      toast(t("allowedLaunch"));
       setTimeout(() => window.close(), 800);
     } catch (error) {
       toast(error.message);
     }
   });
 
-  startWifiPolling((wifi) => {
-    if (!wifi.ssid) return;
-    document.getElementById("statusLine").textContent = `当前检测到 ${wifi.ssid}`;
-    if (initialSsid && wifi.ssid !== initialSsid) {
+  startNetworkPolling((network) => {
+    if (!network.id) return;
+    const name = network.name || network.id;
+    document.getElementById("statusLine").textContent = t("detectedNetwork", { name: networkLabel(network.type, name) });
+    if (initialNetworkId && (network.type || "") === initialNetworkType && network.id !== initialNetworkId) {
       window.close();
       document.body.innerHTML = "";
     }
