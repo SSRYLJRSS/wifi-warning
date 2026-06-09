@@ -80,6 +80,7 @@ install(TARGETS wifi-warning ww-launch RUNTIME DESTINATION .)
 install(DIRECTORY frontend DESTINATION .)
 install(FILES config.json DESTINATION .)
 install(FILES README.md DESTINATION . OPTIONAL)
+install(FILES LICENSE DESTINATION . OPTIONAL)
 install(FILES
     scripts/runtime-smoke.ps1
     scripts/tray-smoke.ps1

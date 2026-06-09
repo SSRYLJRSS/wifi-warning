@@ -36,6 +36,7 @@ Copy-Item -LiteralPath (Join-Path $bin "wifi-warning.exe") -Destination $package
 Copy-Item -LiteralPath (Join-Path $bin "ww-launch.exe") -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $bin "ww-smoke.exe") -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $root "LICENSE") -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $root "config.json") -Destination $packageDir
 Copy-Item -Recurse -Force -LiteralPath (Join-Path $root "frontend") -Destination $packageDir
 if (Test-Path -LiteralPath (Join-Path $root "docs")) {

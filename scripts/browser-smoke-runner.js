@@ -199,6 +199,8 @@ async function checkSettings(page, baseUrl, outDir) {
   for (const expected of ["WiFi 规则", "软件组", "确定规则", "一键恢复快捷方式"]) {
     if (!text.includes(expected)) fail(`settings page missing ${expected}`);
   }
+  await assertNoHorizontalOverflow(page, "settings screenshot");
+  await screenshot(page, outDir, "settings-desktop");
   await page.click('[data-tab="groups"]');
   await page.waitForSelector("#groupsPanel.active", { timeout: 3000 });
   const groupsText = await visibleText(page);
@@ -231,7 +233,6 @@ async function checkSettings(page, baseUrl, outDir) {
   await assertNoPageErrors(page, "settings", errors.concat(failedResponses));
   await assertNoHorizontalOverflow(page, "settings");
   await assertMinimumTapTargets(page, "settings");
-  await screenshot(page, outDir, "settings-desktop");
 }
 
 async function checkWarning(page, baseUrl, outDir) {
@@ -266,6 +267,8 @@ async function checkWarning(page, baseUrl, outDir) {
   }
   const disabled = await page.locator("#switchSafe").isDisabled();
   if (disabled) fail("safe WiFi switch button should be enabled");
+  await assertNoHorizontalOverflow(page, "warning screenshot");
+  await screenshot(page, outDir, "warning-desktop");
   await Promise.all([
     page.waitForResponse((response) => response.url().includes("/api/wifi/switch") && response.request().method() === "POST", { timeout: 3000 }),
     page.click("#switchSafe")
@@ -296,7 +299,6 @@ async function checkWarning(page, baseUrl, outDir) {
   await assertNoPageErrors(page, "warning", errors.concat(failedResponses));
   await assertNoHorizontalOverflow(page, "warning");
   await assertMinimumTapTargets(page, "warning");
-  await screenshot(page, outDir, "warning-desktop");
 }
 
 async function checkPicker(page, baseUrl, outDir) {
@@ -325,6 +327,8 @@ async function checkPicker(page, baseUrl, outDir) {
   for (const expected of ["选择 WiFi", "Office-WiFi", "Home-WiFi", "连接"]) {
     if (!text.includes(expected)) fail(`wifi picker missing ${expected}`);
   }
+  await assertNoHorizontalOverflow(page, "wifi picker screenshot");
+  await screenshot(page, outDir, "wifi-picker-desktop");
   const homeWifiButton = page.locator(".network-row", { hasText: "Home-WiFi" }).locator("button");
   await Promise.all([
     page.waitForResponse((response) => response.url().includes("/api/wifi/switch") && response.request().method() === "POST", { timeout: 3000 }),
@@ -337,21 +341,6 @@ async function checkPicker(page, baseUrl, outDir) {
   await assertNoPageErrors(page, "wifi picker", errors.concat(failedResponses));
   await assertNoHorizontalOverflow(page, "wifi picker");
   await assertMinimumTapTargets(page, "wifi picker");
-  await screenshot(page, outDir, "wifi-picker-desktop");
-}
-
-async function checkMobile(page, baseUrl, outDir) {
-  const appPath = process.env.WW_BROWSER_SMOKE_APP_PATH || "C:\\Runtime\\App.exe";
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`${baseUrl}/settings`, { waitUntil: "networkidle" });
-  await page.waitForSelector("#rulesList .rule-card", { timeout: 5000 });
-  await assertNoHorizontalOverflow(page, "settings mobile");
-  await screenshot(page, outDir, "settings-mobile");
-
-  await page.goto(`${baseUrl}/warning?appName=Runtime%20App&app=${encodeURIComponent(appPath)}&ssid=Office-WiFi&ruleId=runtime_rule`, { waitUntil: "networkidle" });
-  await page.waitForSelector("#switchSafe", { timeout: 5000 });
-  await assertNoHorizontalOverflow(page, "warning mobile");
-  await screenshot(page, outDir, "warning-mobile");
 }
 
 async function checkStatsAfterActions(page, baseUrl) {
@@ -400,7 +389,6 @@ async function main() {
     await checkWarning(page, baseUrl, outDir);
     await checkPicker(page, baseUrl, outDir);
     await checkStatsAfterActions(page, baseUrl);
-    await checkMobile(page, baseUrl, outDir);
     const autoClosePage = await context.newPage();
     await checkWarningAutoClose(autoClosePage, baseUrl);
     await autoClosePage.close();

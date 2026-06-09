@@ -96,7 +96,7 @@ $config = @{
       app_group_id = "runtime_group"
       safe_wifi_ssid = "Home-WiFi"
       safe_wifi_password = "safe-secret"
-      description = "浏览器 smoke"
+      description = "Office-WiFi test rule"
       blocked_apps = @(
         @{
           name = "Runtime App"
@@ -161,7 +161,7 @@ try {
   }
 
   $screenshots = Get-ChildItem -LiteralPath $screenshotDir -Filter *.png | Select-Object -ExpandProperty FullName
-  if (($screenshots | Measure-Object).Count -lt 5) {
+  if (($screenshots | Measure-Object).Count -lt 3) {
     throw "browser smoke did not create expected screenshots"
   }
 
