@@ -5,10 +5,8 @@
     "protection_enabled": true,
     "dark_mode": true,
     "bypass_password": "",
-    "bypass_timeout_minutes": 0,
     "language": "zh-CN",
-    "http_port": 18765,
-    "bypass_until_epoch": 0
+    "http_port": 18765
   },
   "rules": []
 }

@@ -62,10 +62,8 @@ $config = @{
     protection_enabled = $true
     dark_mode = $true
     bypass_password = ""
-    bypass_timeout_minutes = 0
     language = "zh-CN"
     http_port = $port
-    bypass_until_epoch = 0
   }
   app_groups = @(
     @{
@@ -124,7 +122,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = Join-Path $bin "wifi-warning.exe"
-$psi.Arguments = "--self-test-server 45000 --ready-file `"$readyPath`" --no-autostart-sync --minimized"
+$psi.Arguments = "--self-test-server 90000 --ready-file `"$readyPath`" --no-autostart-sync --minimized"
 $psi.WorkingDirectory = $bin
 $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $true

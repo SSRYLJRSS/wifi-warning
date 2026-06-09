@@ -15,6 +15,5 @@ struct RuleMatch {
 
 std::optional<RuleMatch> findBlockingRule(const AppConfig& config, const std::string& ssid, const std::string& appPath);
 std::optional<RuleMatch> findBlockingRuleForNetwork(const AppConfig& config, const NetworkIdentity& network, const std::string& appPath);
-bool hasActiveBypass(const AppConfig& config);
 
 }

@@ -142,10 +142,8 @@ function Start-TestService {
       protection_enabled = $true
       dark_mode = $true
       bypass_password = ""
-      bypass_timeout_minutes = 0
       language = "zh-CN"
       http_port = $port
-      bypass_until_epoch = 0
     }
     rules = @()
   }

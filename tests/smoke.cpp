@@ -684,14 +684,13 @@ int wmain(int argc, wchar_t** argv) {
     constexpr int smokePort = 18766;
     auto httpConfig = manager.load();
     httpConfig.settings.http_port = smokePort;
-    httpConfig.settings.bypass_timeout_minutes = 0;
-    httpConfig.settings.bypass_until_epoch = 0;
     if (!manager.save(httpConfig)) return fail("config save for http smoke failed");
     ww::HttpServer server(smokePort, manager, logger);
     if (!server.start()) return fail("http server did not start");
     Sleep(160);
     std::string configResponse = httpGet(smokePort, "/api/config");
     std::string splitHeaderResponse = httpSplitHeaderGet(smokePort, "/api/config");
+    std::string largeHeaderResponse = httpGet(smokePort, "/" + std::string(20000, 'a'));
     std::string settingsResponse = httpGet(smokePort, "/settings");
     std::string faviconResponse = httpGet(smokePort, "/favicon.ico");
     std::string wifiCurrentResponse = httpGet(smokePort, "/api/wifi/current");
@@ -721,9 +720,11 @@ int wmain(int argc, wchar_t** argv) {
     std::string bypassBody = ww::stringifyJson(ww::JsonValue::Object{{"password", "secret"}, {"app", ""}, {"app_args", originalAppArgs}, {"rule_id", "rule_test"}});
     std::string bypassResponse = httpPostJson(smokePort, "/api/bypass", bypassBody);
     auto afterBypass = manager.load();
-    if (afterBypass.settings.bypass_until_epoch != 0) {
+    auto afterBypassJson = ww::configToJson(afterBypass);
+    const auto* afterBypassSettings = afterBypassJson.get("settings");
+    if (afterBypassSettings && (afterBypassSettings->get("bypass_timeout_minutes") || afterBypassSettings->get("bypass_until_epoch"))) {
         server.stop();
-        return fail("http /api/bypass unexpectedly set bypass timeout");
+        return fail("http /api/bypass unexpectedly wrote timed bypass fields");
     }
     std::string warningResponse = httpGet(smokePort, "/warning?appName=Test%20App&app=" + ww::urlEncode(fakeAppPath) + "&ssid=Office-WiFi&ruleId=rule_test");
     std::string warningJsResponse = httpGet(smokePort, "/js/warning.js");
@@ -795,7 +796,6 @@ int wmain(int argc, wchar_t** argv) {
     std::string disableResponse = httpPostJson(smokePort, "/api/config", disableBody);
     auto fallbackConfig = manager.load();
     fallbackConfig.settings.protection_enabled = true;
-    fallbackConfig.settings.bypass_until_epoch = 0;
     if (!manager.save(fallbackConfig)) {
         server.stop();
         return fail("save launcher browser fallback fixture failed");
@@ -814,7 +814,6 @@ int wmain(int argc, wchar_t** argv) {
     server.stop();
     auto serviceFallbackConfig = manager.load();
     serviceFallbackConfig.settings.protection_enabled = true;
-    serviceFallbackConfig.settings.bypass_until_epoch = 0;
     if (!manager.save(serviceFallbackConfig)) return fail("save launcher service fallback fixture failed");
     fs::path serviceFallbackMarker = root / L"service-fallback.txt";
     DWORD serviceFallbackExit = runLauncherWithEnv(fallbackCommand, {
@@ -832,6 +831,9 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (splitHeaderResponse.find("200 OK") == std::string::npos || splitHeaderResponse.find("\"ok\": true") == std::string::npos) {
         return fail("http split header request failed");
+    }
+    if (largeHeaderResponse.find("400 Bad Request") == std::string::npos) {
+        return fail("http large header limit failed");
     }
     if (settingsResponse.find("200 OK") == std::string::npos || settingsResponse.find("WiFi") == std::string::npos || settingsResponse.find("settings.js") == std::string::npos || settingsResponse.find("browseGroupShortcuts") == std::string::npos) {
         return fail("http /settings smoke failed");
@@ -964,7 +966,6 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     afterDisable.settings.protection_enabled = true;
-    afterDisable.settings.bypass_until_epoch = 0;
     if (!manager.save(afterDisable)) return fail("save launcher block fixture failed");
 
     std::string launcher = launcherPath();
@@ -1019,7 +1020,6 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     disabledConfig.settings.protection_enabled = true;
-    disabledConfig.settings.bypass_until_epoch = 0;
     if (!manager.save(disabledConfig)) return fail("save launcher log fixture failed");
     SetEnvironmentVariableW(L"APPDATA", root.wstring().c_str());
     std::wstring logCommand = quoteProcessArg(ww::utf8ToWide(launcher))

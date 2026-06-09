@@ -75,6 +75,20 @@ async function screenshot(page, outDir, name) {
   await page.screenshot({ path: path.join(outDir, `${name}.png`), fullPage: true });
 }
 
+async function waitForRuleCard(page, label) {
+  try {
+    await page.waitForSelector("#rulesList .rule-card", { timeout: 8000 });
+  } catch (error) {
+    const state = await page.evaluate(() => ({
+      body: document.body.innerText.slice(0, 1200),
+      rules: document.querySelector("#rulesList")?.innerHTML.slice(0, 1200) || "",
+      toast: document.querySelector("#toast")?.textContent || "",
+      configLoaded: Boolean(window.appConfig)
+    })).catch((stateError) => ({ evaluateError: stateError.message }));
+    fail(`${label} rule card did not render: ${JSON.stringify(state)}`);
+  }
+}
+
 async function checkSettingsRuleCrud(page, baseUrl) {
   const shortcutPath = process.env.WW_BROWSER_SMOKE_SHORTCUT_PATH || "";
   await page.click('[data-tab="groups"]');
@@ -104,8 +118,8 @@ async function checkSettingsRuleCrud(page, baseUrl) {
   ]);
   await page.waitForSelector('.rule-card:has-text("Cafe-WiFi") .shortcut-preview', { timeout: 8000 });
   await page.waitForFunction(async ({ url, shortcutPath }) => {
-    const response = await fetch(`${url}/api/config`);
-    const data = await response.json();
+    const data = await window.__readSmokeConfig(url);
+    if (!data) return false;
     return data.config?.rules?.some((rule) => rule.network_type === "wifi" && rule.network_id === "Cafe-WiFi" && rule.app_group_id && rule.blocked_apps?.some((app) => {
       return app.name === "CRUD App" && (!shortcutPath || app.shortcut_paths?.includes(shortcutPath));
     }));
@@ -120,8 +134,8 @@ async function checkSettingsRuleCrud(page, baseUrl) {
   ]);
   await page.waitForSelector('.rule-card:has-text("Cafe-Updated") .shortcut-preview', { timeout: 8000 });
   await page.waitForFunction(async (url) => {
-    const response = await fetch(`${url}/api/config`);
-    const data = await response.json();
+    const data = await window.__readSmokeConfig(url);
+    if (!data) return false;
     return data.config?.rules?.some((rule) => rule.network_type === "wifi" && rule.network_id === "Cafe-Updated" && rule.blocked_apps?.some((app) => app.name === "CRUD App"));
   }, baseUrl, { timeout: 3000 });
 
@@ -132,8 +146,8 @@ async function checkSettingsRuleCrud(page, baseUrl) {
     createdCard.locator('[data-action="delete"]').click()
   ]);
   await page.waitForFunction(async (url) => {
-    const response = await fetch(`${url}/api/config`);
-    const data = await response.json();
+    const data = await window.__readSmokeConfig(url);
+    if (!data) return false;
     return !data.config?.rules?.some((rule) => rule.network_id === "Cafe-Updated");
   }, baseUrl, { timeout: 3000 });
 }
@@ -148,8 +162,8 @@ async function checkSettingsMissingAppCleanup(page, baseUrl) {
     missingRow.locator('[data-action="cleanup-app"]').click()
   ]);
   await page.waitForFunction(async (url) => {
-    const response = await fetch(`${url}/api/config`);
-    const data = await response.json();
+    const data = await window.__readSmokeConfig(url);
+    if (!data) return false;
     return !data.config?.rules?.some((rule) => rule.blocked_apps?.some((app) => app.name === "Missing App"));
   }, baseUrl, { timeout: 3000 });
   await page.waitForFunction(() => !document.body.innerText.includes("Missing App"), { timeout: 3000 });
@@ -164,12 +178,12 @@ async function checkSettingsPassword(page, baseUrl) {
     page.click("#passwordForm button[type='submit']")
   ]);
   await page.waitForFunction(async (url) => {
-    const response = await fetch(`${url}/api/config`);
-    const data = await response.json();
+    const data = await window.__readSmokeConfig(url);
+    if (!data) return false;
     const settings = data.config?.settings || {};
     return settings.bypass_password === "2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b"
-      && settings.bypass_timeout_minutes === 0
-      && settings.bypass_until_epoch === 0;
+      && !("bypass_timeout_minutes" in settings)
+      && !("bypass_until_epoch" in settings);
   }, baseUrl, { timeout: 3000 });
 }
 
@@ -186,6 +200,15 @@ async function checkSettings(page, baseUrl, outDir) {
   await page.addInitScript(() => {
     window.__failedResources = [];
     window.__closeRequested = false;
+    window.__readSmokeConfig = async (baseUrl) => {
+      try {
+        const response = await fetch(`${baseUrl}/api/config`);
+        if (!response.ok) return null;
+        return await response.json();
+      } catch {
+        return null;
+      }
+    };
     window.close = () => { window.__closeRequested = true; };
     window.addEventListener("error", (event) => {
       const target = event.target;
@@ -194,7 +217,7 @@ async function checkSettings(page, baseUrl, outDir) {
     }, true);
   });
   await page.goto(`${baseUrl}/settings`, { waitUntil: "networkidle" });
-  await page.waitForSelector("#rulesList .rule-card", { timeout: 5000 });
+  await waitForRuleCard(page, "settings");
   const text = await visibleText(page);
   for (const expected of ["网络规则", "软件组", "确定规则", "一键恢复快捷方式"]) {
     if (!text.includes(expected)) fail(`settings page missing ${expected}`);
@@ -222,8 +245,8 @@ async function checkSettings(page, baseUrl, outDir) {
   const autoStart = page.locator("#autoStartToggle");
   if (!(await autoStart.isChecked())) await autoStart.check();
   await page.waitForFunction(async (url) => {
-    const response = await fetch(`${url}/api/config`);
-    const data = await response.json();
+    const data = await window.__readSmokeConfig(url);
+    if (!data) return false;
     return data.config?.settings?.auto_start === true && data.auto_start_registered === true;
   }, baseUrl, { timeout: 3000 });
   await checkSettingsRuleCrud(page, baseUrl);

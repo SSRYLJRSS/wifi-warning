@@ -3,7 +3,6 @@
 #include "core/json.h"
 
 #include <mutex>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,10 +45,8 @@ struct Settings {
     bool protection_enabled = true;
     bool dark_mode = true;
     std::string bypass_password;
-    int bypass_timeout_minutes = 0;
     std::string language = "zh-CN";
     int http_port = 18765;
-    std::int64_t bypass_until_epoch = 0;
 };
 
 struct AppConfig {

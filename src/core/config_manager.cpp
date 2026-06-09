@@ -27,11 +27,6 @@ static int intField(const JsonValue& value, const std::string& key, int fallback
     return item ? static_cast<int>(item->asNumber(fallback)) : fallback;
 }
 
-static std::int64_t i64Field(const JsonValue& value, const std::string& key, std::int64_t fallback = 0) {
-    const auto* item = field(value, key);
-    return item ? static_cast<std::int64_t>(item->asNumber(static_cast<double>(fallback))) : fallback;
-}
-
 static JsonValue appToJson(const BlockedApp& app) {
     JsonValue::Array shortcutPaths;
     for (const auto& path : app.shortcut_paths) shortcutPaths.push_back(path);
@@ -80,10 +75,8 @@ JsonValue configToJson(const AppConfig& config) {
     settings["protection_enabled"] = config.settings.protection_enabled;
     settings["dark_mode"] = config.settings.dark_mode;
     settings["bypass_password"] = config.settings.bypass_password;
-    settings["bypass_timeout_minutes"] = config.settings.bypass_timeout_minutes;
     settings["language"] = config.settings.language;
     settings["http_port"] = config.settings.http_port;
-    settings["bypass_until_epoch"] = static_cast<double>(config.settings.bypass_until_epoch);
 
     auto appsToJson = [](const std::vector<BlockedApp>& blockedApps) {
         JsonValue::Array apps;
@@ -133,10 +126,8 @@ AppConfig configFromJson(const JsonValue& value) {
         config.settings.protection_enabled = boolField(*settings, "protection_enabled", config.settings.protection_enabled);
         config.settings.dark_mode = boolField(*settings, "dark_mode", config.settings.dark_mode);
         config.settings.bypass_password = stringField(*settings, "bypass_password", config.settings.bypass_password);
-        config.settings.bypass_timeout_minutes = intField(*settings, "bypass_timeout_minutes", config.settings.bypass_timeout_minutes);
         config.settings.language = stringField(*settings, "language", config.settings.language);
         config.settings.http_port = intField(*settings, "http_port", config.settings.http_port);
-        config.settings.bypass_until_epoch = i64Field(*settings, "bypass_until_epoch", config.settings.bypass_until_epoch);
     }
 
     config.app_groups.clear();
@@ -194,10 +185,8 @@ AppConfig ConfigManager::defaults() {
     config.settings.protection_enabled = true;
     config.settings.dark_mode = true;
     config.settings.bypass_password = "";
-    config.settings.bypass_timeout_minutes = 0;
     config.settings.language = "zh-CN";
     config.settings.http_port = 18765;
-    config.settings.bypass_until_epoch = 0;
     return config;
 }
 

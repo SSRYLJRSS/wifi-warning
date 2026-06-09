@@ -13,7 +13,7 @@ namespace fs = std::filesystem;
 
 namespace ww {
 
-static constexpr int kMaxActiveClients = 4;
+static constexpr int kMaxActiveClients = 16;
 static constexpr size_t kMaxHeaderBytes = 16 * 1024;
 static constexpr size_t kMaxBodyBytes = 2 * 1024 * 1024;
 
@@ -247,8 +247,9 @@ void HttpServer::handleClient(uintptr_t clientSocket) {
     }
 
     auto headersEnd = raw.find("\r\n\r\n");
-    if (headersEnd == std::string::npos) {
-        response = errorResponse("请求头不完整", 400);
+    bool headerTooLarge = (headersEnd != std::string::npos && headersEnd > kMaxHeaderBytes) || raw.size() > kMaxHeaderBytes;
+    if (headersEnd == std::string::npos || headerTooLarge) {
+        response = errorResponse(headerTooLarge ? "request header too large" : "request header incomplete", 400);
         hasResponse = true;
     } else {
         auto request = parseRequest(raw);

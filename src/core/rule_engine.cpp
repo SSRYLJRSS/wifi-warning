@@ -17,17 +17,12 @@ static std::string normalizePath(const std::string& path) {
     return toLowerAscii(wideToUtf8(wide));
 }
 
-bool hasActiveBypass(const AppConfig& config) {
-    (void)config;
-    return false;
-}
-
 std::optional<RuleMatch> findBlockingRule(const AppConfig& config, const std::string& ssid, const std::string& appPath) {
     return findBlockingRuleForNetwork(config, NetworkIdentity{"wifi", ssid, ssid}, appPath);
 }
 
 std::optional<RuleMatch> findBlockingRuleForNetwork(const AppConfig& config, const NetworkIdentity& network, const std::string& appPath) {
-    if (!config.settings.protection_enabled || network.id.empty() || appPath.empty() || hasActiveBypass(config)) {
+    if (!config.settings.protection_enabled || network.id.empty() || appPath.empty()) {
         return std::nullopt;
     }
 

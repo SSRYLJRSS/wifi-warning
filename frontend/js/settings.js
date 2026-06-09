@@ -77,8 +77,6 @@ function normalizeConfig() {
   appConfig.app_groups ||= [];
   appConfig.version = "1.5.0";
   appConfig.settings.language ||= "zh-CN";
-  appConfig.settings.bypass_timeout_minutes = 0;
-  appConfig.settings.bypass_until_epoch = 0;
 
   const knownGroups = new Set(appConfig.app_groups.map((group) => group.id));
   for (const rule of appConfig.rules) {
@@ -894,8 +892,6 @@ async function init() {
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(password));
       appConfig.settings.bypass_password = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
     }
-    appConfig.settings.bypass_timeout_minutes = 0;
-    appConfig.settings.bypass_until_epoch = 0;
     $("bypassPassword").value = "";
     await saveConfig(t("passwordSaved"));
   });
