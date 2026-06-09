@@ -17,7 +17,11 @@ It is useful when you want a small friction point for distracting apps at school
 
 ## Download
 
-Download the portable package from:
+Download the portable package from GitHub Releases:
+
+[Latest release](https://github.com/SSRYLJRSS/wifi-warning/releases/latest)
+
+The same portable zip is also kept in this repository for convenience:
 
 [release/WiFiWarning-portable.zip](release/WiFiWarning-portable.zip)
 
