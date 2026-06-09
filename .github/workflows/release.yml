@@ -1,0 +1,40 @@
+name: Release portable package
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'EOF'
+          ## WiFi Warning 1.5
+
+          - Adds wired network rules.
+          - Adds one-click wired disconnect and restore.
+          - Adds in-app Simplified Chinese / English switching.
+          - Keeps the portable package self-contained; no extra runtime is needed for normal use.
+          - Includes refreshed desktop screenshots and README tutorial.
+          EOF
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" release/WiFiWarning-portable.zip --clobber
+          else
+            gh release create "$TAG_NAME" release/WiFiWarning-portable.zip \
+              --title "WiFi Warning ${TAG_NAME}" \
+              --notes-file release-notes.md
+          fi
