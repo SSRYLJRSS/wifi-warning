@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WiFi 提醒设置</title>
+    <link rel="stylesheet" href="/css/style.css">
+  </head>
+  <body class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">!</span>
+        <div>
+          <strong>WiFi 提醒</strong>
+          <span id="currentSsid">检测中</span>
+        </div>
+      </div>
+      <nav class="nav-tabs" aria-label="设置导航">
+        <button class="nav-item active" data-tab="rules">WiFi 规则</button>
+        <button class="nav-item" data-tab="groups">软件组</button>
+        <button class="nav-item" data-tab="password">密码</button>
+        <button class="nav-item" data-tab="stats">统计</button>
+        <button class="nav-item" data-tab="about">关于</button>
+      </nav>
+      <label class="switch-row">
+        <span>防护</span>
+        <input id="protectionToggle" type="checkbox">
+      </label>
+      <label class="switch-row">
+        <span>开机启动</span>
+        <input id="autoStartToggle" type="checkbox">
+      </label>
+      <label class="switch-row">
+        <span>深色</span>
+        <input id="darkToggle" type="checkbox">
+      </label>
+    </aside>
+
+    <main class="main-panel">
+      <section id="rulesPanel" class="panel active">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">WiFi 规则</p>
+            <h1>三步完成管控</h1>
+          </div>
+          <div class="header-actions">
+            <button id="restoreAllShortcutsButton" class="ghost-button" type="button">一键恢复快捷方式</button>
+            <button id="addRuleButton" class="primary-button" type="button">新建规则</button>
+          </div>
+        </header>
+
+        <section class="settings-card workflow-card">
+          <div class="subhead-row">
+            <div>
+              <h2 id="ruleFormTitle">添加规则</h2>
+              <p class="muted">选择网络和软件组后，程序会替换软件组里选中的快捷方式。</p>
+            </div>
+          </div>
+
+          <form id="ruleForm" class="step-form">
+            <label class="step-item">
+              <span class="step-number">1</span>
+              <span class="step-body">
+                <strong>选择需要管控的 WiFi</strong>
+                <select id="ruleWifiSelect"></select>
+                <input id="manualSsid" list="wifiOptions" placeholder="列表里没有时，手动输入 WiFi 名称">
+              </span>
+            </label>
+
+            <label class="step-item">
+              <span class="step-number">2</span>
+              <span class="step-body">
+                <strong>选择黑名单软件组</strong>
+                <select id="ruleGroupSelect"></select>
+              </span>
+            </label>
+
+            <div class="step-item confirm-step">
+              <span class="step-number">3</span>
+              <div class="step-body">
+                <strong>确定规则，后台运行</strong>
+                <div class="confirm-box">
+                  <div><span>WiFi</span><b id="summaryWifi">未选择</b></div>
+                  <div><span>软件组</span><b id="summaryGroup">未选择</b></div>
+                  <p id="summaryAction" class="muted">完成前两步后即可确定。</p>
+                </div>
+                <button id="saveRuleButton" class="primary-button" type="submit">确定规则并后台运行</button>
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <div id="rulesList" class="card-list"></div>
+      </section>
+
+      <section id="groupsPanel" class="panel">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">软件组</p>
+            <h1>快捷方式黑名单</h1>
+          </div>
+          <button id="newGroupButton" class="primary-button" type="button">新建软件组</button>
+        </header>
+
+        <section class="settings-card groups-card">
+          <div class="subhead-row">
+            <div>
+              <h2>软件组</h2>
+              <p class="muted">用系统文件浏览器选择要替换的 .lnk 快捷方式；名称、图标和位置都会沿用原快捷方式。</p>
+            </div>
+          </div>
+
+          <form id="groupForm" class="group-editor hidden">
+            <h3 id="groupFormTitle">新建软件组</h3>
+            <label>
+              <span>软件组名称</span>
+              <input id="groupName" placeholder="例如 娱乐软件">
+            </label>
+            <label>
+              <span>组内快捷方式</span>
+              <div id="groupShortcutList" class="selected-shortcut-list"></div>
+            </label>
+            <div class="editor-actions">
+              <button class="ghost-button" type="button" id="browseGroupShortcuts">选择快捷方式</button>
+              <button class="ghost-button" type="button" id="cancelGroupEdit">取消</button>
+              <button class="primary-button" type="submit">保存软件组</button>
+            </div>
+          </form>
+
+          <div id="appGroupsList" class="software-group-list"></div>
+        </section>
+      </section>
+
+      <section id="passwordPanel" class="panel">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">密码</p>
+            <h1>本次启动放行</h1>
+          </div>
+        </header>
+        <form id="passwordForm" class="settings-card compact-card">
+          <label>
+            <span>主密码</span>
+            <input id="bypassPassword" type="password" autocomplete="new-password" placeholder="输入新密码">
+          </label>
+          <p class="muted">在提醒页输入密码后，只放行这一次启动。已经启动的程序不会被关闭，也不会开启全局倒计时。</p>
+          <button class="primary-button" type="submit">保存密码</button>
+        </form>
+      </section>
+
+      <section id="statsPanel" class="panel">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">统计</p>
+            <h1>拦截记录</h1>
+          </div>
+          <button id="refreshStats" class="ghost-button">刷新</button>
+        </header>
+        <div class="metric-grid">
+          <div class="metric"><span>今日拦截</span><strong id="blockedToday">0</strong></div>
+          <div class="metric"><span>本周拦截</span><strong id="blockedWeek">0</strong></div>
+          <div class="metric"><span>最常受限</span><strong id="topApp">暂无</strong></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>WiFi</th>
+                <th>应用</th>
+                <th>结果</th>
+              </tr>
+            </thead>
+            <tbody id="logRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="aboutPanel" class="panel">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">关于</p>
+            <h1>WiFi 提醒</h1>
+          </div>
+        </header>
+        <div class="settings-card">
+          <p>版本 1.0.0</p>
+          <p>开源许可：未声明</p>
+          <p>GitHub：未配置</p>
+          <p class="muted">本地运行的 WiFi 场景提醒工具，配置与日志保存在当前 Windows 用户目录。</p>
+          <div class="path-line" id="configPath"></div>
+        </div>
+      </section>
+    </main>
+
+    <datalist id="wifiOptions"></datalist>
+    <div id="toast" class="toast hidden"></div>
+    <script src="/js/api.js"></script>
+    <script src="/js/polling.js"></script>
+    <script src="/js/settings.js"></script>
+  </body>
+</html>

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>选择 WiFi</title>
+    <link rel="stylesheet" href="/css/style.css">
+  </head>
+  <body class="picker-page">
+    <main class="picker-shell">
+      <header class="panel-header">
+        <div>
+          <p class="eyebrow">网络</p>
+          <h1>选择 WiFi</h1>
+        </div>
+        <button id="refreshNetworks" class="ghost-button">刷新</button>
+      </header>
+      <div id="networkList" class="network-list"></div>
+    </main>
+    <div id="toast" class="toast hidden"></div>
+    <script src="/js/api.js"></script>
+    <script src="/js/wifi_picker.js"></script>
+  </body>
+</html>

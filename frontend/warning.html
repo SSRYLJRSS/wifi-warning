@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WiFi 提醒</title>
+    <link rel="stylesheet" href="/css/style.css">
+  </head>
+  <body class="warning-page">
+    <main class="warning-card">
+      <div class="warning-title">
+        <span class="warning-icon" id="fallbackIcon">!</span>
+        <img id="appIcon" class="app-icon hidden" alt="">
+        <div>
+          <p class="eyebrow">WiFi 提醒</p>
+          <h1 id="appName">应用</h1>
+        </div>
+      </div>
+      <p class="warning-copy">已在此网络下被阻止</p>
+      <dl class="detail-list">
+        <div>
+          <dt>当前网络</dt>
+          <dd id="ssid">未知</dd>
+        </div>
+        <div>
+          <dt>规则</dt>
+          <dd id="ruleDescription">读取中</dd>
+        </div>
+      </dl>
+      <div class="action-grid">
+        <button id="switchSafe" class="primary-button">切换到安全网络</button>
+        <button id="pickWifi" class="ghost-button">选择其他网络</button>
+        <button id="showBypass" class="ghost-button danger-text">允许本次启动</button>
+        <button id="closePage" class="ghost-button">知道了</button>
+      </div>
+      <form id="bypassForm" class="bypass-box hidden">
+        <input id="password" type="password" placeholder="输入放行密码">
+        <button class="primary-button" type="submit">确认</button>
+      </form>
+      <p id="statusLine" class="muted"></p>
+    </main>
+    <div id="toast" class="toast hidden"></div>
+    <script src="/js/api.js"></script>
+    <script src="/js/polling.js"></script>
+    <script src="/js/warning.js"></script>
+  </body>
+</html>

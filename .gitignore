@@ -1,0 +1,21 @@
+# Build outputs
+/build/
+!/release/
+
+# Local runtime data
+/dist/
+/logs/
+/WiFiWarning/
+
+# Editor and OS noise
+.vs/
+.vscode/
+*.user
+*.suo
+*.tmp
+*.log
+Thumbs.db
+Desktop.ini
+
+# Keep the portable release asset intentionally tracked.
+!release/WiFiWarning-portable.zip
