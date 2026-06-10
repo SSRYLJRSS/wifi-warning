@@ -280,6 +280,67 @@ static void freeNetwork(CurrentNetwork* network) {
     network->id = nullptr;
 }
 
+
+static CurrentNetwork* getAllActiveNetworks(int* outCount) {
+    CurrentNetwork* networks = static_cast<CurrentNetwork*>(malloc(sizeof(CurrentNetwork) * 16));
+    if (!networks) return nullptr;
+    int count = 0;
+
+    wchar_t* testType = envWide(L"WW_TEST_CURRENT_NETWORK_TYPE");
+    wchar_t* testId = envWide(L"WW_TEST_CURRENT_NETWORK_ID");
+    if ((testType && testType[0]) || (testId && testId[0])) {
+        if (testId && testId[0] && wcscmp(testId, L"<no-adapter>") != 0 && wcscmp(testId, L"<disconnected>") != 0) {
+            networks[count].type = (testType && testType[0]) ? wideToUtf8(testType) : dupRange("wired", 5);
+            networks[count].id = wideToUtf8(testId);
+            ++count;
+        }
+        free(testType); free(testId);
+        *outCount = count;
+        return networks;
+    }
+    free(testType); free(testId);
+
+    char* ssid = currentSsid();
+    if (ssid && ssid[0]) {
+        networks[count].type = dupRange("wifi", 4);
+        networks[count].id = ssid;
+        ++count;
+    }
+    freeStr(ssid);
+
+    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG size = 16 * 1024;
+    IP_ADAPTER_ADDRESSES* addresses = static_cast<IP_ADAPTER_ADDRESSES*>(malloc(size));
+    if (!addresses) { *outCount = count; return networks; }
+    ULONG result = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, addresses, &size);
+    if (result == ERROR_BUFFER_OVERFLOW) {
+        free(addresses);
+        addresses = static_cast<IP_ADAPTER_ADDRESSES*>(malloc(size));
+        result = addresses ? GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, addresses, &size) : ERROR_NOT_ENOUGH_MEMORY;
+    }
+    if (result == NO_ERROR) {
+        for (IP_ADAPTER_ADDRESSES* item = addresses; item; item = item->Next) {
+            if (item->IfType != IF_TYPE_ETHERNET_CSMACD) continue;
+            if (item->OperStatus != IfOperStatusUp || !item->FirstUnicastAddress) continue;
+            if (count < 16) {
+                networks[count].type = dupRange("wired", 5);
+                networks[count].id = item->FriendlyName ? wideToUtf8(item->FriendlyName) : dupRange(item->AdapterName ? item->AdapterName : "", strlen(item->AdapterName ? item->AdapterName : ""));
+                ++count;
+            }
+        }
+    }
+    free(addresses);
+    *outCount = count;
+    return networks;
+}
+
+static void freeAllNetworks(CurrentNetwork* networks, int count) {
+    if (!networks) return;
+    for (int i = 0; i < count; ++i) freeNetwork(&networks[i]);
+    free(networks);
+}
+
+static CurrentNetwork currentNetwork() __attribute__((unused));
 static CurrentNetwork currentNetwork() {
     CurrentNetwork network{};
     wchar_t* testType = envWide(L"WW_TEST_CURRENT_NETWORK_TYPE");
@@ -399,6 +460,16 @@ static bool ruleBlocks(const char* config, size_t len, const char* networkType, 
     }
     freeStr(appLower);
     return found;
+}
+
+
+static bool ruleBlocksAnyNetwork(const char* config, size_t len, CurrentNetwork* networks, int networkCount, const char* appPath, const char* requestedRule, Match* match) {
+    for (int i = 0; i < networkCount; ++i) {
+        if (ruleBlocks(config, len, networks[i].type, networks[i].id, appPath, requestedRule, match)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static bool httpAlive(int port) {
@@ -677,20 +748,26 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         return 0;
     }
 
-    CurrentNetwork network{};
+    // Collect all active networks (WiFi + wired) for multi-network matching
+    int activeCount = 0;
+    CurrentNetwork* activeNetworks = nullptr;
     if (overrideNetworkId && overrideNetworkId[0]) {
-        network.type = (overrideNetworkType && overrideNetworkType[0]) ? dupRange(overrideNetworkType, strlen(overrideNetworkType)) : dupRange("wired", 5);
-        network.id = dupRange(overrideNetworkId, strlen(overrideNetworkId));
+        activeNetworks = static_cast<CurrentNetwork*>(malloc(sizeof(CurrentNetwork)));
+        activeNetworks[0].type = (overrideNetworkType && overrideNetworkType[0]) ? dupRange(overrideNetworkType, strlen(overrideNetworkType)) : dupRange("wired", 5);
+        activeNetworks[0].id = dupRange(overrideNetworkId, strlen(overrideNetworkId));
+        activeCount = 1;
     } else if (overrideSsid && overrideSsid[0]) {
-        network.type = dupRange("wifi", 4);
-        network.id = dupRange(overrideSsid, strlen(overrideSsid));
+        activeNetworks = static_cast<CurrentNetwork*>(malloc(sizeof(CurrentNetwork)));
+        activeNetworks[0].type = dupRange("wifi", 4);
+        activeNetworks[0].id = dupRange(overrideSsid, strlen(overrideSsid));
+        activeCount = 1;
     } else {
-        network = currentNetwork();
+        activeNetworks = getAllActiveNetworks(&activeCount);
     }
-    if (!network.id || !network.id[0]) {
+    if (activeCount == 0) {
         if (!dryRun && !noLaunch) shellOpenWithArgs(appPath, appArgs);
         if (dryRun) printDryAllow("no_wifi");
-        freeNetwork(&network);
+        freeAllNetworks(activeNetworks, activeCount);
         freeStr(config);
         freeStr(appPath);
         freeStr(appArgs);
@@ -703,10 +780,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     }
 
     Match match{};
-    if (!ruleBlocks(config, configLen, network.type, network.id, appPath, ruleId, &match)) {
+    if (!ruleBlocksAnyNetwork(config, configLen, activeNetworks, activeCount, appPath, ruleId, &match)) {
         if (!dryRun && !noLaunch) shellOpenWithArgs(appPath, appArgs);
-        if (dryRun) printDryAllow("no_matching_rule", network.id);
-        freeNetwork(&network);
+        if (dryRun) printDryAllow("no_matching_rule", activeCount > 0 ? activeNetworks[0].id : "");
+        freeAllNetworks(activeNetworks, activeCount);
         freeStr(config);
         freeStr(appPath);
         freeStr(appArgs);
@@ -718,15 +795,27 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         return 0;
     }
 
-    if (!dryRun) logBlocked(network.id, appPath, match.ruleId);
+    const char* matchedNetworkId = "";
+    const char* matchedNetworkType = "";
+    // Find which network matched
+    for (int n = 0; n < activeCount; ++n) {
+        Match tmp{};
+        if (ruleBlocks(config, configLen, activeNetworks[n].type, activeNetworks[n].id, appPath, ruleId, &tmp)) {
+            matchedNetworkId = activeNetworks[n].id;
+            matchedNetworkType = activeNetworks[n].type;
+            break;
+        }
+    }
+
+    if (!dryRun) logBlocked(matchedNetworkId, appPath, match.ruleId);
     int port = jsonInt(config, configLen, "http_port", 18765);
     if (port <= 0) port = 18765;
 
     const char* appName = (match.appName && match.appName[0]) ? match.appName : baseName(appPath);
-    char* url = makeWarningUrl(port, appPath, appName, appArgs, network.type, network.id, match.ruleId);
+    char* url = makeWarningUrl(port, appPath, appName, appArgs, matchedNetworkType, matchedNetworkId, match.ruleId);
 
     if (dryRun) {
-        printDryBlock(match.ruleId, appName, network.type, network.id, url ? url : "");
+        printDryBlock(match.ruleId, appName, matchedNetworkType, matchedNetworkId, url ? url : "");
     } else if (url && httpAlive(port)) {
         if (!shellOpen(url)) {
             showFallbackWarning(true);
@@ -740,7 +829,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     freeStr(url);
     freeStr(match.ruleId);
     freeStr(match.appName);
-    freeNetwork(&network);
+    freeAllNetworks(activeNetworks, activeCount);
     freeStr(config);
     freeStr(appPath);
     freeStr(appArgs);

@@ -154,6 +154,30 @@ NetworkStatus getCurrentNetwork() {
     return status;
 }
 
+
+std::vector<NetworkIdentity> getActiveNetworks() {
+    std::vector<NetworkIdentity> networks;
+    if (auto test = testNetworkOverride()) {
+        if (test->connected && !test->id.empty()) {
+            networks.push_back({test->type, test->id, test->name});
+        }
+        return networks;
+    }
+
+    // Collect ALL active networks (WiFi + wired)
+    auto wifi = getCurrentWifi();
+    if (wifi.connected && !wifi.ssid.empty()) {
+        networks.push_back({"wifi", wifi.ssid, wifi.ssid});
+    }
+
+    for (const auto& adapter : listWiredAdapters()) {
+        if (adapter.connected && !adapter.id.empty()) {
+            networks.push_back({"wired", adapter.id, adapter.name.empty() ? adapter.id : adapter.name});
+        }
+    }
+    return networks;
+}
+
 bool isNoNetworkAdapter(const NetworkStatus& status) {
     return !status.adapter_available && (status.error.empty() || status.error == "No network adapter");
 }

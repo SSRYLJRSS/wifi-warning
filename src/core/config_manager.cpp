@@ -186,7 +186,7 @@ ConfigManager::ConfigManager(std::wstring path) : path_(std::move(path)) {
 
 AppConfig ConfigManager::defaults() {
     AppConfig config;
-    config.version = "1.7.0";
+    config.version = "1.8.0";
     config.settings.auto_start = true;
     config.settings.protection_enabled = true;
     config.settings.dark_mode = true;
