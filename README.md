@@ -180,6 +180,7 @@ It is built for simple self-control and managed-use cases around distracting or 
 [Settings screenshot]
 ![Uploading QQ20260610-131451.png…]()
 
+
 ### Features
 
 - Rules for both WiFi and wired networks.
