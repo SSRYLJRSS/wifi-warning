@@ -178,7 +178,8 @@ WiFi Warning is a Windows desktop tray app. You create rules by network: when th
 It is built for simple self-control and managed-use cases around distracting or restricted apps, such as games, video apps, chat tools, or proxy tools. It changes shortcuts only, not the real apps. Shortcut names, icons, and locations stay the same.
 
 [Settings screenshot]
-<img width="2559" height="1131" alt="QQ20260610-130309" src="https://github.com/user-attachments/assets/54949d3d-a532-4c95-80c7-c1d9c1f854dc" />
+![Uploading QQ20260610-131451.png…]()
+
 ### Features
 
 - Rules for both WiFi and wired networks.
@@ -190,7 +191,7 @@ It is built for simple self-control and managed-use cases around distracting or 
 - Portable package: extract and run. No Node.js, Python, CMake, or other development tools are needed for normal use.
 - Local-first: settings run on `localhost`, config/logs stay under the current Windows user profile, and shortcut backups are saved alongside the executable.
 
-### Download
+### 下载
 
 Download the portable package:
 
