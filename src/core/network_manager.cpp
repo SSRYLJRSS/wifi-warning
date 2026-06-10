@@ -139,8 +139,6 @@ std::vector<WiredAdapter> listWiredAdapters() {
     // NOTE: MinGW _wpopen+fgetws does NOT correctly convert UTF-8 to UTF-16 on
     //       codepage 65001 systems. Use _popen+fgets+MultiByteToWideChar instead.
     FILE* pipe = _popen("netsh interface show interface", "r");
-    std::vector<std::string> netshConfirmedNames;
-
     if (pipe) {
         char lineBuf[4096];
         int lineNum = 0;
@@ -228,7 +226,6 @@ std::vector<WiredAdapter> listWiredAdapters() {
                 adapter.status = statusStr;
                 adapters.push_back(adapter);
             }
-            netshConfirmedNames.push_back(nameUtf8);
         }
         _pclose(pipe);
     }
@@ -352,13 +349,26 @@ NetworkActionResult setWiredAdapterEnabled(const std::string& adapterId, bool en
 
     std::wstring args = L"interface set interface name=" + quoteNetshName(adapterId)
         + L" admin=" + (enabled ? L"enabled" : L"disabled");
-    HINSTANCE launch = ShellExecuteW(nullptr, L"runas", L"netsh.exe", args.c_str(), nullptr, SW_HIDE);
-    intptr_t code = reinterpret_cast<intptr_t>(launch);
-    result.ok = code > 32;
-    result.requested = result.ok;
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+    sei.lpVerb = L"runas";
+    sei.lpFile = L"netsh.exe";
+    sei.lpParameters = args.c_str();
+    sei.nShow = SW_HIDE;
+    result.ok = ShellExecuteExW(&sei) && sei.hProcess != nullptr;
+    if (result.ok) {
+        WaitForSingleObject(sei.hProcess, 30000);
+        DWORD exitCode = 0;
+        if (GetExitCodeProcess(sei.hProcess, &exitCode)) {
+            result.ok = (exitCode == 0);
+        }
+        CloseHandle(sei.hProcess);
+    }
+    result.requested = true;
     result.elevated = result.ok;
     result.status = result.ok ? (enabled ? "enable_requested" : "disable_requested") : "failed";
-    if (!result.ok) result.error = "could not start elevated netsh";
+    if (!result.ok) result.error = result.requested ? "netsh returned non-zero exit code" : "could not start elevated netsh";
     return result;
 }
 
