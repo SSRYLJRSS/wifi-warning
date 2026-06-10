@@ -10,7 +10,9 @@ WiFi 提醒是一款 Windows 桌面托盘工具。你可以按网络设置规则
 
 它适合用来管住容易分心或需要被管控的软件，比如游戏、视频、聊天工具、网络代理工具。规则只改快捷方式，不改软件本体；快捷方式的名称、图标和位置保持不变。
 
-![设置页截图](docs/screenshots/settings-desktop.png)
+![设置页截图]
+<img width="2559" height="1131" alt="QQ20260610-130309" src="https://github.com/user-attachments/assets/54949d3d-a532-4c95-80c7-c1d9c1f854dc" />
+
 
 ### 功能
 
@@ -51,19 +53,6 @@ WiFi 提醒是一款 Windows 桌面托盘工具。你可以按网络设置规则
 .\restore-shortcuts.cmd
 ```
 
-### 截图
-
-#### 设置页
-
-![设置页截图](docs/screenshots/settings-desktop.png)
-
-#### 提醒页
-
-![提醒页截图](docs/screenshots/warning-desktop.png)
-
-#### 网络选择页
-
-![网络选择页截图](docs/screenshots/wifi-picker-desktop.png)
 
 ### 使用教程
 
