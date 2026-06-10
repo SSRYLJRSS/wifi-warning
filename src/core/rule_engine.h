@@ -15,5 +15,6 @@ struct RuleMatch {
 
 std::optional<RuleMatch> findBlockingRule(const AppConfig& config, const std::string& ssid, const std::string& appPath);
 std::optional<RuleMatch> findBlockingRuleForNetwork(const AppConfig& config, const NetworkIdentity& network, const std::string& appPath);
+std::optional<RuleMatch> findBlockingRuleForNetworks(const AppConfig& config, const std::vector<NetworkIdentity>& networks, const std::string& appPath);
 
 }

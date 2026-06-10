@@ -43,6 +43,7 @@ struct NetworkActionResult {
 };
 
 NetworkStatus getCurrentNetwork();
+std::vector<NetworkIdentity> getActiveNetworks();
 bool isNoNetworkAdapter(const NetworkStatus& status);
 std::vector<WiredAdapter> listWiredAdapters();
 NetworkActionResult setWiredAdapterEnabled(const std::string& adapterId, bool enabled);

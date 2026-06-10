@@ -52,7 +52,7 @@ struct Settings {
 };
 
 struct AppConfig {
-    std::string version = "1.7.0";
+    std::string version = "1.8.0";
     Settings settings;
     std::vector<AppGroup> app_groups;
     std::vector<Rule> rules;

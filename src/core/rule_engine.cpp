@@ -1,6 +1,7 @@
 #include "core/rule_engine.h"
 
 #include "core/util.h"
+#include "core/network_manager.h"
 
 #include <filesystem>
 
@@ -40,6 +41,15 @@ std::optional<RuleMatch> findBlockingRuleForNetwork(const AppConfig& config, con
                 return RuleMatch{rule, app};
             }
         }
+    }
+    return std::nullopt;
+}
+
+
+std::optional<RuleMatch> findBlockingRuleForNetworks(const AppConfig& config, const std::vector<NetworkIdentity>& networks, const std::string& appPath) {
+    for (const auto& network : networks) {
+        auto match = findBlockingRuleForNetwork(config, network, appPath);
+        if (match) return match;
     }
     return std::nullopt;
 }

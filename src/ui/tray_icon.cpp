@@ -3,6 +3,7 @@
 #include "core/shortcut_manager.h"
 #include "core/util.h"
 #include "core/wifi_detector.h"
+#include "core/network_manager.h"
 #include "resources/resource.h"
 #include "ui/browser_launcher.h"
 
@@ -20,7 +21,9 @@ static constexpr UINT ID_STATS = 1002;
 static constexpr UINT ID_TOGGLE = 1003;
 static constexpr UINT ID_EXIT = 1004;
 static constexpr UINT ID_CURRENT = 1005;
-static constexpr UINT ID_SELF_TEST_TIMER = 2001;
+static constexpr UINT ID_WIRED_BASE = 2001;
+static constexpr UINT ID_WIRED_MAX = 2100;
+static constexpr UINT ID_SELF_TEST_TIMER = 3001;
 
 struct TrayIconImpl {
     ConfigManager& config;
@@ -119,6 +122,26 @@ static void showMenu(HWND hwnd, TrayIconImpl* impl) {
     AppendMenuW(menu, MF_STRING | MF_DISABLED, ID_CURRENT, wifi.c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
+    // Wired adapter toggle entries
+    auto wiredAdapters = listWiredAdapters();
+    if (!wiredAdapters.empty()) {
+        int wiredIdx = 0;
+        for (const auto& adapter : wiredAdapters) {
+            if (static_cast<unsigned>(wiredIdx) >= ID_WIRED_MAX - ID_WIRED_BASE) break;
+            std::wstring label = utf8ToWide(adapter.name.empty() ? adapter.id : adapter.name);
+            if (adapter.connected) {
+                label += L" (已连接 - 点击禁用)";
+            } else if (adapter.enabled) {
+                label += L" (未连接 - 点击禁用)";
+            } else {
+                label += L" (已禁用 - 点击启用)";
+            }
+            AppendMenuW(menu, MF_STRING, ID_WIRED_BASE + wiredIdx, label.c_str());
+            ++wiredIdx;
+        }
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    }
+
     auto config = impl->config.load();
     AppendMenuW(menu, MF_STRING, ID_TOGGLE, config.settings.protection_enabled ? L"防护: 开启" : L"防护: 关闭");
     AppendMenuW(menu, MF_STRING, ID_SETTINGS, L"设置");
@@ -156,6 +179,24 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 return 0;
             }
+            default:
+                if (LOWORD(wp) >= ID_WIRED_BASE && LOWORD(wp) < ID_WIRED_MAX) {
+                    int idx = LOWORD(wp) - ID_WIRED_BASE;
+                    auto adapters = listWiredAdapters();
+                    if (idx < static_cast<int>(adapters.size())) {
+                        const auto& adapter = adapters[idx];
+                        bool newState = !adapter.enabled;
+                        auto result = setWiredAdapterEnabled(adapter.id, newState);
+                        if (result.ok) {
+                            std::wstring msg = newState
+                                ? L"正在启用: " + utf8ToWide(adapter.name.empty() ? adapter.id : adapter.name)
+                                : L"正在禁用: " + utf8ToWide(adapter.name.empty() ? adapter.id : adapter.name);
+                            showBalloon(impl, L"有线网卡", msg.c_str());
+                        }
+                    }
+                    return 0;
+                }
+                break;
             case ID_EXIT: {
                 auto config = impl->config.load();
                 bool shouldExit = true;
