@@ -37,6 +37,7 @@ struct TrayIconImpl {
     bool running = true;
     bool icon_added = false;
     bool no_adapter_notice_shown = false;
+    std::vector<WiredAdapter> cached_wired_adapters;
     std::thread poller;
     struct Notice {
         std::wstring title;
@@ -122,22 +123,23 @@ static void showMenu(HWND hwnd, TrayIconImpl* impl) {
     AppendMenuW(menu, MF_STRING | MF_DISABLED, ID_CURRENT, wifi.c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    // Wired adapter toggle entries
-    auto wiredAdapters = listWiredAdapters();
+    // Wired adapter toggle entries (use cached list to avoid blocking UI thread with netsh)
+    const auto& wiredAdapters = impl->cached_wired_adapters;
     if (!wiredAdapters.empty()) {
-        int wiredIdx = 0;
-        for (const auto& adapter : wiredAdapters) {
-            if (static_cast<unsigned>(wiredIdx) >= ID_WIRED_MAX - ID_WIRED_BASE) break;
+        for (int i = 0; i < static_cast<int>(wiredAdapters.size()); ++i) {
+            if (static_cast<unsigned>(i) >= ID_WIRED_MAX - ID_WIRED_BASE) break;
+            const auto& adapter = wiredAdapters[i];
+            // Only show connected adapters and disabled (previously-toggled) adapters.
+            // Skip enabled-but-disconnected adapters that the user has never toggled.
+            if (adapter.enabled && !adapter.connected) continue;
             std::wstring label = utf8ToWide(adapter.name.empty() ? adapter.id : adapter.name);
             if (adapter.connected) {
                 label += L" (已连接 - 点击禁用)";
-            } else if (adapter.enabled) {
-                label += L" (未连接 - 点击禁用)";
             } else {
                 label += L" (已禁用 - 点击启用)";
             }
-            AppendMenuW(menu, MF_STRING, ID_WIRED_BASE + wiredIdx, label.c_str());
-            ++wiredIdx;
+            // Use original index i as menu ID so WM_COMMAND can map directly
+            AppendMenuW(menu, MF_STRING, ID_WIRED_BASE + i, label.c_str());
         }
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
@@ -182,17 +184,24 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             default:
                 if (LOWORD(wp) >= ID_WIRED_BASE && LOWORD(wp) < ID_WIRED_MAX) {
                     int idx = LOWORD(wp) - ID_WIRED_BASE;
-                    auto adapters = listWiredAdapters();
+                    // Use cached adapters (same data as the menu was built from)
+                    const auto& adapters = impl->cached_wired_adapters;
                     if (idx < static_cast<int>(adapters.size())) {
                         const auto& adapter = adapters[idx];
                         bool newState = !adapter.enabled;
-                        auto result = setWiredAdapterEnabled(adapter.id, newState);
-                        if (result.ok) {
-                            std::wstring msg = newState
-                                ? L"正在启用: " + utf8ToWide(adapter.name.empty() ? adapter.id : adapter.name)
-                                : L"正在禁用: " + utf8ToWide(adapter.name.empty() ? adapter.id : adapter.name);
-                            showBalloon(impl, L"有线网卡", msg.c_str());
-                        }
+                        std::wstring adapterNameW = utf8ToWide(adapter.name.empty() ? adapter.id : adapter.name);
+                        // Run netsh in a background thread to avoid blocking the UI
+                        std::thread([adapterId = adapter.id, newState, adapterNameW, impl] {
+                            auto result = setWiredAdapterEnabled(adapterId, newState);
+                            if (result.ok) {
+                                std::wstring msg = newState
+                                    ? L"正在启用: " + adapterNameW
+                                    : L"正在禁用: " + adapterNameW;
+                                showBalloon(impl, L"有线网卡", msg.c_str());
+                            }
+                            // Refresh adapter list after toggle
+                            impl->cached_wired_adapters = listWiredAdapters();
+                        }).detach();
                     }
                     return 0;
                 }
@@ -294,6 +303,7 @@ int TrayIcon::run(int selfTestMs, const std::wstring& readyFile, int selfTestCom
     impl_->nid.hIcon = impl_->icon ? impl_->icon : LoadIconW(nullptr, IDI_WARNING);
     wcsncpy_s(impl_->nid.szTip, L"WiFi 提醒", _TRUNCATE);
     impl_->icon_added = Shell_NotifyIconW(NIM_ADD, &impl_->nid) == TRUE;
+    impl_->cached_wired_adapters = listWiredAdapters();
     updateWifiText(getCurrentWifi());
     for (const auto& notice : impl_->startup_notices) {
         showBalloon(impl_.get(), notice.title, notice.message, notice.flags);
@@ -316,6 +326,7 @@ int TrayIcon::run(int selfTestMs, const std::wstring& readyFile, int selfTestCom
         while (impl_->running) {
             auto wifi = getCurrentWifi();
             updateWifiText(wifi);
+            impl_->cached_wired_adapters = listWiredAdapters();
             trimCurrentProcessWorkingSet();
             Sleep(5000);
         }

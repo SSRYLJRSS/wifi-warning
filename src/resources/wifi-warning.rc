@@ -5,8 +5,8 @@
 1 RT_MANIFEST "app.manifest"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,7,0,0
- PRODUCTVERSION 1,7,0,0
+ FILEVERSION 1,9,1,0
+ PRODUCTVERSION 1,9,1,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -23,11 +23,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "WiFi Warning"
       VALUE "FileDescription", "WiFi 提醒"
-      VALUE "FileVersion", "1.7.0"
+      VALUE "FileVersion", "1.9.1"
       VALUE "InternalName", "wifi-warning"
       VALUE "OriginalFilename", "wifi-warning.exe"
       VALUE "ProductName", "WiFi 提醒"
-      VALUE "ProductVersion", "1.7.0"
+      VALUE "ProductVersion", "1.9.1"
     END
   END
   BLOCK "VarFileInfo"
