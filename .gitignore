@@ -1,11 +1,13 @@
 # Build outputs
 /build/
-!/release/
+/release/
+/dist/
+/WiFiWarning/
 
 # Local runtime data
-/dist/
 /logs/
-/WiFiWarning/
+config.json
+*.log
 
 # Editor and OS noise
 .vs/
@@ -13,9 +15,5 @@
 *.user
 *.suo
 *.tmp
-*.log
 Thumbs.db
 Desktop.ini
-
-# Keep the portable release asset intentionally tracked.
-!release/WiFiWarning-portable.zip
