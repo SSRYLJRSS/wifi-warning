@@ -75,7 +75,7 @@ function normalizeConfig() {
   appConfig.settings ||= {};
   appConfig.rules ||= [];
   appConfig.app_groups ||= [];
-  appConfig.version = "1.7.0";
+  // v1.9: preserve backend version instead of hardcoding
   appConfig.settings.language ||= "zh-CN";
 
   const knownGroups = new Set(appConfig.app_groups.map((group) => group.id));

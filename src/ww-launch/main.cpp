@@ -84,11 +84,14 @@ static wchar_t* joinWide3(const wchar_t* a, const wchar_t* b, const wchar_t* c) 
 }
 
 static wchar_t* defaultConfigPath() {
-    wchar_t* appData = envWide(L"APPDATA");
-    if (!appData) return joinWide3(L".", L"\\WiFiWarning", L"\\config.json");
-    wchar_t* out = joinWide3(appData, L"\\WiFiWarning", L"\\config.json");
-    free(appData);
-    return out;
+    // v1.9: config.json lives next to the executable
+    wchar_t exePath[MAX_PATH];
+    DWORD size = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    if (size == 0 || size >= MAX_PATH) { wchar_t* d = (wchar_t*)malloc(4); if(d){d[0]=L'.';d[1]=0;} return d; }
+    wchar_t* lastSlash = wcsrchr(exePath, L'\\');
+    if (!lastSlash) lastSlash = wcsrchr(exePath, L'/');
+    if (lastSlash) *lastSlash = 0;
+    return joinWide3(exePath, L"\\config.json", L"");
 }
 
 static char* readUtf8File(const wchar_t* path) {
@@ -576,19 +579,20 @@ static void timestamp(char* out, size_t cap, bool dateOnly) {
 }
 
 static void logBlocked(const char* networkId, const char* app, const char* ruleId) {
-    wchar_t* appData = envWide(L"APPDATA");
-    wchar_t* root = appData ? joinWide3(appData, L"\\WiFiWarning", L"") : joinWide3(L".", L"\\WiFiWarning", L"");
-    if (appData) free(appData);
-    if (!root) return;
-    CreateDirectoryW(root, nullptr);
-    wchar_t* logs = joinWide3(root, L"\\logs", L"");
+    // v1.9: logs stored next to the executable
+    wchar_t exePath[MAX_PATH];
+    DWORD exeSize = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    if (exeSize == 0 || exeSize >= MAX_PATH) return;
+    wchar_t* lastSlash = wcsrchr(exePath, L'\\');
+    if (!lastSlash) lastSlash = wcsrchr(exePath, L'/');
+    if (lastSlash) *lastSlash = 0;
+    wchar_t* logs = joinWide3(exePath, L"\\logs", L"");
     CreateDirectoryW(logs, nullptr);
     char day[16]{};
     timestamp(day, sizeof(day), true);
     wchar_t* dayWide = utf8ToWide(day);
     wchar_t* file = joinWide3(logs, L"\\", dayWide);
     wchar_t* fileJsonl = joinWide3(file, L".jsonl", L"");
-    free(root);
     free(logs);
     free(dayWide);
     free(file);

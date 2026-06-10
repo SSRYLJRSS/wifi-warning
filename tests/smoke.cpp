@@ -1045,7 +1045,8 @@ int wmain(int argc, wchar_t** argv) {
     WaitForSingleObject(logProcess.hProcess, 5000);
     CloseHandle(logProcess.hThread);
     CloseHandle(logProcess.hProcess);
-    fs::path launcherLogDir = root / L"WiFiWarning" / L"logs";
+    // v1.9: ww-launch writes logs to its own executable directory, not APPDATA\WiFiWarning\logs
+    fs::path launcherLogDir = fs::path(ww::utf8ToWide(launcherPath())).parent_path() / L"logs";
     bool foundBlockedLog = false;
     if (fs::exists(launcherLogDir, ec)) {
         for (const auto& entry : fs::directory_iterator(launcherLogDir, ec)) {
@@ -1063,9 +1064,11 @@ int wmain(int argc, wchar_t** argv) {
     uninstallConfig.settings.protection_enabled = true;
     uninstallConfig.settings.auto_start = true;
     uninstallConfig.rules[0].blocked_apps[0].replaced_shortcuts = {};
-    ww::ConfigManager uninstallManager((root / L"WiFiWarning" / L"config.json").wstring());
+    // v1.9: wifi-warning reads config from executable directory, not APPDATA\WiFiWarning
+    fs::path serviceExeDir = fs::path(ww::utf8ToWide(launcherPath())).parent_path();
+    fs::path exeConfigPath = serviceExeDir / L"config.json";
+    ww::ConfigManager uninstallManager(exeConfigPath.wstring());
     if (!uninstallManager.save(uninstallConfig)) return fail("save uninstall fixture failed");
-    SetEnvironmentVariableW(L"APPDATA", root.wstring().c_str());
     DWORD uninstallExit = runServiceCommand({L"--uninstall-restore", L"--no-autostart-sync"});
     if (uninstallExit != 0) return fail("uninstall restore command failed: " + std::to_string(uninstallExit));
     auto afterUninstall = uninstallManager.load();

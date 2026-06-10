@@ -46,22 +46,19 @@ std::wstring getEnvWide(const wchar_t* name) {
     return value;
 }
 
+// v1.9: All data stored alongside the executable (portable, no external files)
 std::wstring appDataRoot() {
-    std::wstring root = getEnvWide(L"APPDATA");
-    if (root.empty()) root = executableDir();
-    fs::path path(root);
-    path /= L"WiFiWarning";
-    return path.wstring();
+    return executableDir();
 }
 
 std::wstring appConfigPath() {
-    fs::path path(appDataRoot());
+    fs::path path(executableDir());
     path /= L"config.json";
     return path.wstring();
 }
 
 std::wstring logsDir() {
-    fs::path path(appDataRoot());
+    fs::path path(executableDir());
     path /= L"logs";
     return path.wstring();
 }
@@ -234,8 +231,12 @@ std::optional<int> parseInt(const std::string& value) {
     }
 }
 
+// v1.9: Removed trimCurrentProcessWorkingSet — SetProcessWorkingSetSize(-1,-1)
+// is a well-known anti-pattern that forces pages back to disk and hurts
+// performance on subsequent allocations. The OS manages the working set
+// efficiently on its own.
 void trimCurrentProcessWorkingSet() {
-    SetProcessWorkingSetSize(GetCurrentProcess(), static_cast<SIZE_T>(-1), static_cast<SIZE_T>(-1));
+    // No-op: let Windows manage memory naturally.
 }
 
 }

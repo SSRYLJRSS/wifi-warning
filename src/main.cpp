@@ -115,8 +115,8 @@ static void addStartupNotices(ww::TrayIcon& tray, const ww::ConfigLoadStatus& co
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     auto args = commandLineArgs();
-    ww::ensureDirectory(ww::appDataRoot());
-    ww::ensureDirectory(ww::logsDir());
+    // v1.9: config.json and logs are now stored alongside the executable.
+    // No need to pre-create directories — ConfigManager and Logger do it internally.
 
     ww::ConfigManager configManager;
     auto config = configManager.load();
@@ -178,8 +178,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         if (!readyPath.empty()) {
             ww::writeTextFileUtf8(readyPath, "ready:" + std::to_string(config.settings.http_port));
         }
-        ww::trimCurrentProcessWorkingSet();
-        Sleep(static_cast<DWORD>(durationMs));
+            Sleep(static_cast<DWORD>(durationMs));
         server.stop();
         return 0;
     }
@@ -189,8 +188,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         std::wstring readyPath = argValue(args, L"--ready-file");
         std::wstring command = argValue(args, L"--self-test-tray-command");
         int commandId = command == L"toggle" ? 1003 : 0;
-        ww::trimCurrentProcessWorkingSet();
-        ww::TrayIcon tray(configManager, logger, config.settings.http_port);
+            ww::TrayIcon tray(configManager, logger, config.settings.http_port);
         addStartupNotices(tray, configLoadStatus, disabledForNoAdapter);
         int code = tray.run(durationMs, readyPath, commandId);
         server.stop();
@@ -201,7 +199,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         ww::openUrlInBrowser("http://localhost:" + std::to_string(config.settings.http_port) + "/settings");
     }
 
-    ww::trimCurrentProcessWorkingSet();
     ww::TrayIcon tray(configManager, logger, config.settings.http_port);
     addStartupNotices(tray, configLoadStatus, disabledForNoAdapter);
     int code = tray.run();
