@@ -10,7 +10,7 @@ WiFi 提醒是一款 Windows 桌面托盘工具。你可以按网络设置规则
 
 它适合用来管住容易分心或需要被管控的软件，比如游戏、视频、聊天工具、网络代理工具。规则只改快捷方式，不改软件本体；快捷方式的名称、图标和位置保持不变。
 
-![设置页截图]
+[设置页截图]
 <img width="2559" height="1131" alt="QQ20260610-130309" src="https://github.com/user-attachments/assets/54949d3d-a532-4c95-80c7-c1d9c1f854dc" />
 
 
@@ -177,8 +177,8 @@ WiFi Warning is a Windows desktop tray app. You create rules by network: when th
 
 It is built for simple self-control and managed-use cases around distracting or restricted apps, such as games, video apps, chat tools, or proxy tools. It changes shortcuts only, not the real apps. Shortcut names, icons, and locations stay the same.
 
-![Settings screenshot](docs/screenshots/settings-desktop.png)
-
+[Settings screenshot]
+<img width="2559" height="1131" alt="QQ20260610-130309" src="https://github.com/user-attachments/assets/54949d3d-a532-4c95-80c7-c1d9c1f854dc" />
 ### Features
 
 - Rules for both WiFi and wired networks.
@@ -218,19 +218,6 @@ Before deleting the folder, restore shortcuts first:
 .\restore-shortcuts.cmd
 ```
 
-### Screenshots
-
-#### Settings
-
-![Settings screenshot](docs/screenshots/settings-desktop.png)
-
-#### Warning Page
-
-![Warning screenshot](docs/screenshots/warning-desktop.png)
-
-#### Network Picker
-
-![Network picker screenshot](docs/screenshots/wifi-picker-desktop.png)
 
 ### Tutorial
 
