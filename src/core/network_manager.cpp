@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <iphlpapi.h>
 #include <shellapi.h>
+#include <stdio.h>
 
 #include <memory>
 #include <optional>
@@ -92,7 +93,9 @@ std::vector<WiredAdapter> listWiredAdapters() {
     if (!testAdapters.empty()) return testAdapters;
 
     std::vector<WiredAdapter> adapters;
-    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+
+    // Pass 1: GetAdaptersAddresses for connected adapters (rich info)
+    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_INCLUDE_ALL_INTERFACES;
     ULONG size = 16 * 1024;
     std::vector<unsigned char> buffer(size);
     IP_ADAPTER_ADDRESSES* addresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
@@ -102,22 +105,157 @@ std::vector<WiredAdapter> listWiredAdapters() {
         addresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
         result = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, addresses, &size);
     }
-    if (result != NO_ERROR) return adapters;
-
-    for (auto* item = addresses; item; item = item->Next) {
-        if (item->IfType != IF_TYPE_ETHERNET_CSMACD) continue;
-        WiredAdapter adapter;
-        adapter.name = item->FriendlyName ? wideToUtf8(item->FriendlyName) : "";
-        if (!adapter.name.empty()) {
-            adapter.id = adapter.name;
-        } else if (item->AdapterName) {
-            adapter.id = item->AdapterName;
+    if (result == NO_ERROR) {
+        for (auto* item = addresses; item; item = item->Next) {
+            if (item->IfType != IF_TYPE_ETHERNET_CSMACD) continue;
+            // Skip non-ethernet adapters by common name patterns
+            if (item->FriendlyName) {
+                std::wstring gaaName(item->FriendlyName);
+                std::wstring gaaLower = gaaName;
+                for (auto& ch : gaaLower) ch = towlower(ch);
+                if (gaaLower.find(L"wi-fi") != std::wstring::npos ||
+                    gaaLower.find(L"bluetooth") != std::wstring::npos ||
+                    gaaLower.find(L"蓝牙") != std::wstring::npos ||
+                    gaaLower.find(L"wlan") != std::wstring::npos) continue;
+            }
+            WiredAdapter adapter;
+            adapter.name = item->FriendlyName ? wideToUtf8(item->FriendlyName) : "";
+            if (!adapter.name.empty()) {
+                adapter.id = adapter.name;
+            } else if (item->AdapterName) {
+                adapter.id = item->AdapterName;
+            }
+            adapter.connected = item->OperStatus == IfOperStatusUp && item->FirstUnicastAddress != nullptr;
+            // Note: enabled status will be corrected by netsh pass below
+            adapter.enabled = item->OperStatus != IfOperStatusNotPresent;
+            adapter.status = operStatusString(item->OperStatus);
+            if (!adapter.id.empty()) adapters.push_back(adapter);
         }
-        adapter.connected = item->OperStatus == IfOperStatusUp && item->FirstUnicastAddress != nullptr;
-        adapter.enabled = item->OperStatus != IfOperStatusNotPresent;
-        adapter.status = operStatusString(item->OperStatus);
-        if (!adapter.id.empty()) adapters.push_back(adapter);
     }
+
+    // Pass 2: netsh interface show interface (authoritative for admin status)
+    // GAA may hide disabled adapters or misreport their admin enabled state.
+    // netsh reliably lists ALL interfaces with correct Admin State.
+    // NOTE: MinGW _wpopen+fgetws does NOT correctly convert UTF-8 to UTF-16 on
+    //       codepage 65001 systems. Use _popen+fgets+MultiByteToWideChar instead.
+    FILE* pipe = _popen("netsh interface show interface", "r");
+    std::vector<std::string> netshConfirmedNames;
+
+    if (pipe) {
+        char lineBuf[4096];
+        int lineNum = 0;
+        while (fgets(lineBuf, static_cast<int>(sizeof(lineBuf)), pipe)) {
+            ++lineNum;
+            // Convert UTF-8 narrow line to UTF-16 wide string
+            int wideLen = MultiByteToWideChar(CP_UTF8, 0, lineBuf, -1, nullptr, 0);
+            if (wideLen <= 1) continue;
+            std::wstring wline;
+            wline.resize(static_cast<size_t>(wideLen) - 1);
+            MultiByteToWideChar(CP_UTF8, 0, lineBuf, -1, wline.data(), wideLen);
+
+            // Trim trailing whitespace
+            while (!wline.empty() && (wline.back() == L'\n' || wline.back() == L'\r' || wline.back() == L' ' || wline.back() == L'\t')) wline.pop_back();
+            if (wline.empty()) continue;
+            if (lineNum <= 2) continue;
+            if (wline.find_first_not_of(L'-') == std::wstring::npos) continue;
+
+            // Split into tokens by whitespace
+            std::vector<std::wstring> tokens;
+            std::wstring cur;
+            bool inSpace = true;
+            for (wchar_t ch : wline) {
+                if (ch == L' ' || ch == L'\t') {
+                    if (!inSpace && !cur.empty()) { tokens.push_back(cur); cur.clear(); }
+                    inSpace = true;
+                } else { cur += ch; inSpace = false; }
+            }
+            if (!cur.empty()) tokens.push_back(cur);
+            // Format: AdminState ConnState Type InterfaceName...
+            if (tokens.size() < 4) continue;
+
+            std::wstring adminStatus = tokens[0];
+            std::wstring connStatus  = tokens[1];
+            std::wstring connType    = tokens[2];
+            std::wstring ifName;
+            for (size_t i = 3; i < tokens.size(); ++i) {
+                if (!ifName.empty()) ifName += L' ';
+                ifName += tokens[i];
+            }
+            if (ifName.empty()) continue;
+
+            // Only process "Dedicated" type interfaces
+            std::wstring lowerType = connType;
+            for (auto& ch : lowerType) ch = towlower(ch);
+            if (lowerType != L"dedicated" && lowerType != L"\u4e13\u7528") continue;
+
+            // Skip known non-ethernet interface name patterns
+            std::wstring lowerName = ifName;
+            for (auto& ch : lowerName) ch = towlower(ch);
+            if (lowerName.find(L"wi-fi") != std::wstring::npos ||
+                lowerName.find(L"wifi") != std::wstring::npos ||
+                lowerName.find(L"bluetooth") != std::wstring::npos ||
+                lowerName.find(L"\u84dd\u7259") != std::wstring::npos ||
+                lowerName.find(L"virtual") != std::wstring::npos ||
+                lowerName.find(L"loopback") != std::wstring::npos ||
+                lowerName.find(L"isatap") != std::wstring::npos ||
+                lowerName.find(L"vethernet") != std::wstring::npos ||
+                lowerName.find(L"hyperv") != std::wstring::npos) {
+                continue;
+            }
+
+            bool enabled = (adminStatus == L"Enabled" || adminStatus == L"\u5df2\u542f\u7528");
+            bool connected = (connStatus == L"Connected" || connStatus == L"\u5df2\u8fde\u63a5");
+            std::string statusStr = enabled ? (connected ? "up" : "down") : "disabled";
+            std::string nameUtf8 = wideToUtf8(ifName);
+
+            // Update existing adapter or add new one
+            bool found = false;
+            for (auto& existing : adapters) {
+                if (existing.id == nameUtf8 || existing.name == nameUtf8) {
+                    existing.enabled = enabled;
+                    existing.connected = connected;
+                    existing.status = statusStr;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                WiredAdapter adapter;
+                adapter.name = nameUtf8;
+                adapter.id = nameUtf8;
+                adapter.connected = connected;
+                adapter.enabled = enabled;
+                adapter.status = statusStr;
+                adapters.push_back(adapter);
+            }
+            netshConfirmedNames.push_back(nameUtf8);
+        }
+        _pclose(pipe);
+    }
+
+    // Pass 3: Filter out non-ethernet adapters
+    // Remove WiFi, Bluetooth, VPN/VNIC adapters that slipped through GAA+netsh
+    {
+        std::vector<WiredAdapter> filtered;
+        for (const auto& a : adapters) {
+            std::string lower = a.name;
+            for (auto& ch : lower) ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+            bool skip = (lower.find("wi-fi") != std::string::npos ||
+                         lower.find("wifi") != std::string::npos ||
+                         lower.find("wlan") != std::string::npos ||
+                         lower.find("bluetooth") != std::string::npos ||
+                         lower.find("\u84dd\u7259") != std::string::npos ||
+                         lower.find("vnic") != std::string::npos ||
+                         lower.find("vethernet") != std::string::npos ||
+                         lower.find("hyper") != std::string::npos ||
+                         lower.find("virtual") != std::string::npos ||
+                         lower.find("loopback") != std::string::npos ||
+                         lower.find("\u672c\u5730\u8fde\u63a5") != std::string::npos);
+            if (!skip) filtered.push_back(a);
+        }
+        adapters = std::move(filtered);
+    }
+
     return adapters;
 }
 
