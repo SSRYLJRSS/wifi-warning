@@ -7,7 +7,6 @@
 #include <windows.h>
 #include <iphlpapi.h>
 #include <shellapi.h>
-#include <stdio.h>
 
 #include <memory>
 #include <optional>
@@ -132,24 +131,65 @@ std::vector<WiredAdapter> listWiredAdapters() {
             if (!adapter.id.empty()) adapters.push_back(adapter);
         }
     }
-
     // Pass 2: netsh interface show interface (authoritative for admin status)
     // GAA may hide disabled adapters or misreport their admin enabled state.
     // netsh reliably lists ALL interfaces with correct Admin State.
-    // NOTE: MinGW _wpopen+fgetws does NOT correctly convert UTF-8 to UTF-16 on
-    //       codepage 65001 systems. Use _popen+fgets+MultiByteToWideChar instead.
-    FILE* pipe = _popen("netsh interface show interface", "r");
-    if (pipe) {
-        char lineBuf[4096];
+    // NOTE: Use CreateProcessW with CREATE_NO_WINDOW to avoid flashing a console window
+    //       in the GUI process. _popen allocates a console for the child process.
+    {
+        SECURITY_ATTRIBUTES sa{};
+        sa.nLength = sizeof(sa);
+        sa.bInheritHandle = TRUE;
+        HANDLE hRead = nullptr, hWrite = nullptr;
+        if (!CreatePipe(&hRead, &hWrite, &sa, 0)) goto pass3;
+
+        SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
+
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdOutput = hWrite;
+        si.hStdError = hWrite;
+
+        PROCESS_INFORMATION pi{};
+        wchar_t cmdline[] = L"netsh interface show interface";
+        BOOL created = CreateProcessW(
+            nullptr,
+            cmdline,
+            nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+        CloseHandle(hWrite);
+        hWrite = nullptr;
+
+        if (!created) { CloseHandle(hRead); goto pass3; }
+
+        // Read all output
+        std::string netshOutput;
+        char buf[4096];
+        DWORD bytesRead = 0;
+        while (ReadFile(hRead, buf, sizeof(buf), &bytesRead, nullptr) && bytesRead > 0) {
+            netshOutput.append(buf, bytesRead);
+        }
+        CloseHandle(hRead);
+        WaitForSingleObject(pi.hProcess, 10000);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+
+        // Parse netsh output line by line
         int lineNum = 0;
-        while (fgets(lineBuf, static_cast<int>(sizeof(lineBuf)), pipe)) {
+        size_t pos = 0;
+        while (pos < netshOutput.size()) {
+            size_t eol = netshOutput.find('\n', pos);
+            if (eol == std::string::npos) eol = netshOutput.size();
+            std::string lineBuf = netshOutput.substr(pos, eol - pos);
+            pos = eol + 1;
             ++lineNum;
+
             // Convert UTF-8 narrow line to UTF-16 wide string
-            int wideLen = MultiByteToWideChar(CP_UTF8, 0, lineBuf, -1, nullptr, 0);
+            int wideLen = MultiByteToWideChar(CP_UTF8, 0, lineBuf.c_str(), -1, nullptr, 0);
             if (wideLen <= 1) continue;
             std::wstring wline;
             wline.resize(static_cast<size_t>(wideLen) - 1);
-            MultiByteToWideChar(CP_UTF8, 0, lineBuf, -1, wline.data(), wideLen);
+            MultiByteToWideChar(CP_UTF8, 0, lineBuf.c_str(), -1, wline.data(), wideLen);
 
             // Trim trailing whitespace
             while (!wline.empty() && (wline.back() == L'\n' || wline.back() == L'\r' || wline.back() == L' ' || wline.back() == L'\t')) wline.pop_back();
@@ -168,7 +208,6 @@ std::vector<WiredAdapter> listWiredAdapters() {
                 } else { cur += ch; inSpace = false; }
             }
             if (!cur.empty()) tokens.push_back(cur);
-            // Format: AdminState ConnState Type InterfaceName...
             if (tokens.size() < 4) continue;
 
             std::wstring adminStatus = tokens[0];
@@ -197,7 +236,12 @@ std::vector<WiredAdapter> listWiredAdapters() {
                 lowerName.find(L"loopback") != std::wstring::npos ||
                 lowerName.find(L"isatap") != std::wstring::npos ||
                 lowerName.find(L"vethernet") != std::wstring::npos ||
-                lowerName.find(L"hyperv") != std::wstring::npos) {
+                lowerName.find(L"hyperv") != std::wstring::npos ||
+                lowerName.find(L"lightweight") != std::wstring::npos ||
+                lowerName.find(L"ndis") != std::wstring::npos ||
+                lowerName.find(L"qos") != std::wstring::npos ||
+                lowerName.find(L"wfp") != std::wstring::npos ||
+                lowerName.find(L"-0000") != std::wstring::npos) {
                 continue;
             }
 
@@ -227,8 +271,8 @@ std::vector<WiredAdapter> listWiredAdapters() {
                 adapters.push_back(adapter);
             }
         }
-        _pclose(pipe);
     }
+pass3:
 
     // Pass 3: Filter out non-ethernet adapters
     // Remove WiFi, Bluetooth, VPN/VNIC adapters that slipped through GAA+netsh
@@ -247,7 +291,14 @@ std::vector<WiredAdapter> listWiredAdapters() {
                          lower.find("hyper") != std::string::npos ||
                          lower.find("virtual") != std::string::npos ||
                          lower.find("loopback") != std::string::npos ||
-                         lower.find("\u672c\u5730\u8fde\u63a5") != std::string::npos);
+                         lower.find("\u672c\u5730\u8fde\u63a5") != std::string::npos ||
+                         lower.find("lightweight filter") != std::string::npos ||
+                         lower.find("ndis") != std::string::npos ||
+                         lower.find("qos packet scheduler") != std::string::npos ||
+                         lower.find("wfp native mac") != std::string::npos ||
+                         lower.find("wfp 802.3") != std::string::npos ||
+                         lower.find("packet scheduler") != std::string::npos ||
+                         lower.find("-0000") != std::string::npos);
             if (!skip) filtered.push_back(a);
         }
         adapters = std::move(filtered);

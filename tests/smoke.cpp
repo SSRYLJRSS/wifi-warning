@@ -1011,8 +1011,8 @@ int wmain(int argc, wchar_t** argv) {
         return fail("launcher wired dry-run allow decision failed: " + wiredAllowDecision.output);
     }
 
-    SetEnvironmentVariableW(L"WW_TEST_CURRENT_NETWORK_TYPE", nullptr);
-    SetEnvironmentVariableW(L"WW_TEST_CURRENT_NETWORK_ID", nullptr);
+    SetEnvironmentVariableW(L"WW_TEST_CURRENT_NETWORK_TYPE", L"");
+    SetEnvironmentVariableW(L"WW_TEST_CURRENT_NETWORK_ID", L"<no-adapter>");
     SetEnvironmentVariableW(L"WW_TEST_WIRED_ADAPTERS_JSON", nullptr);
     SetEnvironmentVariableW(L"WW_TEST_WIRED_ACTION", nullptr);
     SetEnvironmentVariableW(L"WW_TEST_CURRENT_SSID", L"<no-adapter>");

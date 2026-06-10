@@ -349,6 +349,7 @@ static JsonValue::Array browseFiles(bool* cancelled, std::string* error, const w
     ofn.lpstrFilter = filter;
     ofn.lpstrFile = buffer.data();
     ofn.nMaxFile = static_cast<DWORD>(buffer.size());
+    ofn.hwndOwner = GetForegroundWindow();
     ofn.Flags = OFN_EXPLORER | OFN_ALLOWMULTISELECT | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
 
     if (!GetOpenFileNameW(&ofn)) {
