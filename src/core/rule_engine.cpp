@@ -26,6 +26,10 @@ std::optional<RuleMatch> findBlockingRuleForNetwork(const AppConfig& config, con
         return std::nullopt;
     }
 
+    if (nowUnixSeconds() < config.settings.bypass_until_epoch) {
+        return std::nullopt;
+    }
+
     std::string normalizedApp = normalizePath(appPath);
     for (const auto& rule : config.rules) {
         std::string ruleType = rule.network_type.empty() ? "wifi" : rule.network_type;

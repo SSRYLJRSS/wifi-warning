@@ -21,7 +21,7 @@ WiFi 提醒是一款 Windows 桌面托盘工具。你可以按网络设置规则
 - 提醒页支持切换安全 WiFi、断开有线网络、输入密码允许本次启动。
 - 中英文界面切换：点击 **简体中文** 或 **English** 即可切换。
 - 绿色便携包：解压即用，不需要安装 Node.js、Python、CMake 或其他开发环境。
-- 本地运行：设置页只在 `localhost` 打开，配置和日志保存在当前 Windows 用户目录。
+- 本地运行：设置页只在 `localhost` 打开，配置和日志保存在当前 Windows 用户目录，快捷方式备份保存在软件本体所在目录。
 
 ### 下载
 
@@ -158,7 +158,7 @@ release/         GitHub Release 使用的绿色包
 
 ### 验证状态
 
-本地验证通过日期：2026-06-09。
+本地验证通过日期：2026-06-10。
 
 - `build-mingw`
 - `ww-smoke`
@@ -199,7 +199,7 @@ It is built for simple self-control and managed-use cases around distracting or 
 - Warning page can switch to a safe WiFi, disconnect wired network, or allow this launch with a password.
 - Chinese and English UI: click **简体中文** or **English** to switch.
 - Portable package: extract and run. No Node.js, Python, CMake, or other development tools are needed for normal use.
-- Local-first: settings run on `localhost`, and config/logs stay under the current Windows user profile.
+- Local-first: settings run on `localhost`, config/logs stay under the current Windows user profile, and shortcut backups are saved alongside the executable.
 
 ### Download
 
@@ -282,9 +282,7 @@ You can:
 - stop and go back;
 - switch to a safe WiFi;
 - disconnect wired network;
-- enter the password to allow only this launch.
-
-Password bypass is one-time only. There is no allow duration and no global countdown.
+- enter the password to bypass, which allows the app and blocks nothing for a configurable duration (default 30 minutes).
 
 #### 5. Restore Shortcuts
 
@@ -336,7 +334,7 @@ release/         Portable zip used for GitHub Release
 
 ### Validation
 
-Local validation passed on 2026-06-09.
+Local validation passed on 2026-06-10.
 
 - `build-mingw`
 - `ww-smoke`

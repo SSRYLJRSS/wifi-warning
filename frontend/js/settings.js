@@ -75,7 +75,7 @@ function normalizeConfig() {
   appConfig.settings ||= {};
   appConfig.rules ||= [];
   appConfig.app_groups ||= [];
-  appConfig.version = "1.5.0";
+  appConfig.version = "1.7.0";
   appConfig.settings.language ||= "zh-CN";
 
   const knownGroups = new Set(appConfig.app_groups.map((group) => group.id));
@@ -700,6 +700,7 @@ function applySettings() {
   $("autoStartToggle").checked = appConfig.settings.auto_start;
   $("darkToggle").checked = appConfig.settings.dark_mode;
   document.body.classList.toggle("dark", appConfig.settings.dark_mode);
+  $("bypassTimeout").value = appConfig.settings.bypass_timeout_minutes > 0 ? appConfig.settings.bypass_timeout_minutes : 30;
 }
 
 function actionLabel(row) {
@@ -820,6 +821,8 @@ async function init() {
   appConfig = data.config;
   normalizeConfig();
   $("configPath").textContent = data.config_path || "";
+  const bp = document.getElementById("backupPath");
+  if (bp) bp.textContent = data.backup_path || "";
   applyLanguage(currentLanguageFromConfig(appConfig));
   applySettings();
   renderGroups();
@@ -892,6 +895,8 @@ async function init() {
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(password));
       appConfig.settings.bypass_password = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
     }
+    const timeoutVal = parseInt($("bypassTimeout").value) || 0;
+    appConfig.settings.bypass_timeout_minutes = timeoutVal > 0 ? timeoutVal : 0;
     $("bypassPassword").value = "";
     await saveConfig(t("passwordSaved"));
   });

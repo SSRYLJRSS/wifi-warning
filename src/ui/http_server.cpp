@@ -236,6 +236,11 @@ void HttpServer::acceptLoop() {
 
 void HttpServer::handleClient(uintptr_t clientSocket) {
     SOCKET client = static_cast<SOCKET>(clientSocket);
+    // RAII guard: ensure socket is always closed even on exception
+    struct SocketGuard {
+        SOCKET sock;
+        ~SocketGuard() { if (sock != INVALID_SOCKET) { shutdown(sock, SD_BOTH); closesocket(sock); } }
+    } guard{client};
     std::string raw;
     char buffer[4096];
     HttpResponse response;
@@ -278,8 +283,7 @@ void HttpServer::handleClient(uintptr_t clientSocket) {
         std::string bytes = responseBytes(response);
         sendAll(client, bytes);
     }
-    shutdown(client, SD_BOTH);
-    closesocket(client);
+    // socket cleanup handled by RAII SocketGuard
     if (active_clients_.fetch_sub(1) == 1) clients_done_.notify_all();
 }
 

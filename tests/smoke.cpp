@@ -722,9 +722,20 @@ int wmain(int argc, wchar_t** argv) {
     auto afterBypass = manager.load();
     auto afterBypassJson = ww::configToJson(afterBypass);
     const auto* afterBypassSettings = afterBypassJson.get("settings");
-    if (afterBypassSettings && (afterBypassSettings->get("bypass_timeout_minutes") || afterBypassSettings->get("bypass_until_epoch"))) {
+    // v1.7: bypass API now sets bypass_until_epoch for timed bypass window
+    const auto* bypassEpoch = afterBypassSettings ? afterBypassSettings->get("bypass_until_epoch") : nullptr;
+    if (!bypassEpoch || bypassEpoch->asNumber() <= 0) {
         server.stop();
-        return fail("http /api/bypass unexpectedly wrote timed bypass fields");
+        return fail("http /api/bypass did not set bypass_until_epoch");
+    }
+    // Reset bypass_until_epoch so subsequent launcher tests are not affected
+    {
+        auto resetConfig = manager.load();
+        resetConfig.settings.bypass_until_epoch = 0;
+        if (!manager.save(resetConfig)) {
+            server.stop();
+            return fail("failed to reset bypass_until_epoch after bypass test");
+        }
     }
     std::string warningResponse = httpGet(smokePort, "/warning?appName=Test%20App&app=" + ww::urlEncode(fakeAppPath) + "&ssid=Office-WiFi&ruleId=rule_test");
     std::string warningJsResponse = httpGet(smokePort, "/js/warning.js");

@@ -47,10 +47,12 @@ struct Settings {
     std::string bypass_password;
     std::string language = "zh-CN";
     int http_port = 18765;
+    int bypass_timeout_minutes = 0;
+    std::int64_t bypass_until_epoch = 0;
 };
 
 struct AppConfig {
-    std::string version = "1.5.0";
+    std::string version = "1.7.0";
     Settings settings;
     std::vector<AppGroup> app_groups;
     std::vector<Rule> rules;

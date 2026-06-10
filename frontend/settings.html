@@ -150,7 +150,11 @@
             <span data-i18n="masterPassword">放行密码</span>
             <input id="bypassPassword" type="password" autocomplete="new-password" data-i18n-placeholder="passwordPlaceholder" placeholder="输入新密码">
           </label>
-          <p class="muted" data-i18n="passwordMuted">在提醒页输入密码后，只放行这一次启动；不需要设置允许时长，也不会开启全局倒计时。</p>
+          <label>
+            <span data-i18n="bypassTimeout">放行时长（分钟）</span>
+            <input id="bypassTimeout" type="number" min="1" max="1440" value="30" data-i18n-placeholder="bypassTimeoutPlaceholder" placeholder="30">
+          </label>
+          <p class="muted" data-i18n="passwordMuted">在提醒页输入密码后，放行该应用并在此时长内免拦截。设为 0 则使用默认 30 分钟。</p>
           <button class="primary-button" type="submit" data-i18n="savePassword">保存密码</button>
         </form>
       </section>
@@ -191,11 +195,12 @@
           </div>
         </header>
         <div class="settings-card">
-          <p data-i18n="version">版本 1.5.0</p>
+          <p data-i18n="version">版本 1.7.0</p>
           <p data-i18n="license">开源许可：MIT License</p>
           <p>GitHub: <a href="https://github.com/SSRYLJRSS/wifi-warning" target="_blank" rel="noreferrer">SSRYLJRSS/wifi-warning</a></p>
-          <p class="muted" data-i18n="aboutMuted">本地运行的 Windows 网络提醒工具。配置与日志保存在当前 Windows 用户目录。</p>
+          <p class="muted" data-i18n="aboutMuted">本地运行的 Windows 网络提醒工具。配置保存在当前 Windows 用户目录，快捷方式备份保存在软件本体所在目录。</p>
           <div class="path-line" id="configPath"></div>
+          <div class="path-line" id="backupPath"></div>
         </div>
       </section>
     </main>

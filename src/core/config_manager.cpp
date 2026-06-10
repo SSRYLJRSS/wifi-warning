@@ -77,6 +77,8 @@ JsonValue configToJson(const AppConfig& config) {
     settings["bypass_password"] = config.settings.bypass_password;
     settings["language"] = config.settings.language;
     settings["http_port"] = config.settings.http_port;
+    settings["bypass_timeout_minutes"] = config.settings.bypass_timeout_minutes;
+    settings["bypass_until_epoch"] = static_cast<double>(config.settings.bypass_until_epoch);
 
     auto appsToJson = [](const std::vector<BlockedApp>& blockedApps) {
         JsonValue::Array apps;
@@ -128,6 +130,10 @@ AppConfig configFromJson(const JsonValue& value) {
         config.settings.bypass_password = stringField(*settings, "bypass_password", config.settings.bypass_password);
         config.settings.language = stringField(*settings, "language", config.settings.language);
         config.settings.http_port = intField(*settings, "http_port", config.settings.http_port);
+        config.settings.bypass_timeout_minutes = intField(*settings, "bypass_timeout_minutes", config.settings.bypass_timeout_minutes);
+        if (const auto* bypassEpoch = field(*settings, "bypass_until_epoch")) {
+            config.settings.bypass_until_epoch = static_cast<std::int64_t>(bypassEpoch->asNumber(0));
+        }
     }
 
     config.app_groups.clear();
@@ -180,7 +186,7 @@ ConfigManager::ConfigManager(std::wstring path) : path_(std::move(path)) {
 
 AppConfig ConfigManager::defaults() {
     AppConfig config;
-    config.version = "1.5.0";
+    config.version = "1.7.0";
     config.settings.auto_start = true;
     config.settings.protection_enabled = true;
     config.settings.dark_mode = true;

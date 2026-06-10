@@ -198,7 +198,7 @@ std::vector<std::string> shortcutScanRoots() {
 
 static fs::path shortcutBackupRoot() {
     std::wstring overrideRoot = getEnvWide(L"WW_SHORTCUT_BACKUP_ROOT");
-    fs::path root = overrideRoot.empty() ? fs::path(appDataRoot()) / L"shortcut-backups" : fs::path(overrideRoot);
+    fs::path root = overrideRoot.empty() ? fs::path(executableDir()) / L"shortcut-backups" : fs::path(overrideRoot);
     ensureDirectory(root.wstring());
     return root;
 }

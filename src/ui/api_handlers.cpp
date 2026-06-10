@@ -74,10 +74,12 @@ bool ApiHandlers::handle(const HttpRequest& request, HttpResponse& response) {
 HttpResponse ApiHandlers::configGet() {
     auto config = config_.load();
     if (reconcileShortcutRecords(config) > 0) config_.save(config);
+    fs::path backupRoot = fs::path(executableDir()) / L"shortcut-backups";
     return jsonResponse(JsonValue::Object{
         {"ok", true},
         {"config", configToJson(config)},
         {"config_path", wideToUtf8(config_.path())},
+        {"backup_path", wideToUtf8(backupRoot.wstring())},
         {"auto_start_registered", isAutoStartEnabled()}
     });
 }
@@ -206,6 +208,11 @@ HttpResponse ApiHandlers::bypass(const std::string& body) {
     if (config.settings.bypass_password.empty()) return errorResponse("尚未设置临时允许密码", 403);
     if (sha256Hex(password) != config.settings.bypass_password) return errorResponse("密码不正确", 403);
 
+    // Set bypass_until_epoch so rule_engine and ww-launch will allow during this window
+    int timeoutMin = config.settings.bypass_timeout_minutes > 0 ? config.settings.bypass_timeout_minutes : 30;
+    config.settings.bypass_until_epoch = nowUnixSeconds() + static_cast<int64_t>(timeoutMin) * 60;
+    config_.save(config);
+
     LogRecord bypassRecord;
     bypassRecord.timestamp = nowIsoLocal();
     bypassRecord.app = pathBaseNameUtf8(app);
@@ -215,7 +222,7 @@ HttpResponse ApiHandlers::bypass(const std::string& body) {
     logger_.write(bypassRecord);
 
     bool launched = app.empty() ? false : launchAppPath(app, appArgs);
-    return jsonResponse(JsonValue::Object{{"ok", true}, {"launched", launched}});
+    return jsonResponse(JsonValue::Object{{"ok", true}, {"launched", launched}, {"bypass_minutes", timeoutMin}});
 }
 
 static std::string trimNullTerminated(std::wstring value) {

@@ -206,6 +206,13 @@ static int jsonInt(const char* text, size_t len, const char* key, int fallback) 
     return atoi(text + value);
 }
 
+static bool hasActiveBypass(const char* config, size_t len) {
+    long long bypassUntil = atoll(config + valueStart(config, len, "bypass_until_epoch", 0, len));
+    if (bypassUntil <= 0) return false;
+    time_t now = time(nullptr);
+    return now < (time_t)bypassUntil;
+}
+
 static bool arrayBounds(const char* text, size_t len, const char* key, size_t begin, size_t end, size_t* outBegin, size_t* outEnd) {
     size_t value = valueStart(text, len, key, begin, end);
     if (value == SIZE_MAX || value >= len || text[value] != '[') return false;
@@ -645,6 +652,20 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     if (!config || !config[0] || !jsonBool(config, configLen, "protection_enabled", true)) {
         if (!dryRun && !noLaunch) shellOpenWithArgs(appPath, appArgs);
         if (dryRun) printDryAllow("config_or_disabled");
+        freeStr(config);
+        freeStr(appPath);
+        freeStr(appArgs);
+        freeStr(ruleId);
+        freeStr(overrideSsid);
+        freeStr(overrideNetworkType);
+        freeStr(overrideNetworkId);
+        freeStr(configOverride);
+        return 0;
+    }
+
+    if (hasActiveBypass(config, configLen)) {
+        if (!dryRun && !noLaunch) shellOpenWithArgs(appPath, appArgs);
+        if (dryRun) printDryAllow("active_bypass");
         freeStr(config);
         freeStr(appPath);
         freeStr(appArgs);
