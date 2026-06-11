@@ -21,14 +21,14 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          cat > release-notes.md <<'EOF'
-          ## WiFi Warning 1.5
+          VERSION="${TAG_NAME}"
+          cat > release-notes.md <<EOF
+          ## WiFi Warning ${VERSION} / WiFi 警告 ${VERSION}
 
-          - Adds wired network rules.
-          - Adds one-click wired disconnect and restore.
-          - Adds in-app Simplified Chinese / English switching.
-          - Keeps the portable package self-contained; no extra runtime is needed for normal use.
-          - Includes refreshed desktop screenshots and README tutorial.
+          - Fixes multiple rules sharing the same shortcut: only the last rule took effect before.
+          - Fixes multi-network blocking failure when a shortcut is managed by several rules simultaneously.
+          - 修复多条规则绑定同一快捷方式时仅最后一条生效的问题。
+          - 修复同一快捷方式被多条规则管理时，多网络匹配拦截失效的 bug。
           EOF
 
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
