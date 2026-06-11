@@ -459,7 +459,34 @@ static bool ruleBlocks(const char* config, size_t len, const char* networkType, 
             freeStr(ruleNetworkId);
             ruleNetworkId = dupRange(ruleSsid, strlen(ruleSsid));
         }
-        bool ruleMatches = (!requestedRule || !requestedRule[0] || strcmp(ruleId, requestedRule) == 0)
+        // When --rule is provided, verify that this rule contains the same app (so we
+        // know the shortcut belongs to some rule), then match network freely.
+        // This fixes the bug where multiple rules replace the same shortcut: only
+        // the last --rule survives, but we still want to block on ANY matching network.
+        bool appBelongsToSomeRule = (!requestedRule || !requestedRule[0]);
+        if (!appBelongsToSomeRule) {
+            // Check if this rule's blocked_apps contains the requested app
+            size_t checkBegin = 0, checkEnd = 0;
+            if (arrayBounds(config, len, "blocked_apps", objectBegin, objectEnd, &checkBegin, &checkEnd)) {
+                size_t cp = checkBegin + 1;
+                while (!appBelongsToSomeRule && cp < checkEnd) {
+                    const char* co = static_cast<const char*>(memchr(config + cp, '{', checkEnd - cp));
+                    if (!co) break;
+                    size_t cb = static_cast<size_t>(co - config);
+                    size_t ce = findMatching(config, len, cb, '}');
+                    if (ce == SIZE_MAX || ce > checkEnd) break;
+                    char* checkPath = jsonString(config, len, "original_path", cb, ce);
+                    char* checkLower = lowerCopy(checkPath);
+                    if (checkLower && appLower && strcmp(checkLower, appLower) == 0) {
+                        appBelongsToSomeRule = true;
+                    }
+                    freeStr(checkPath);
+                    freeStr(checkLower);
+                    cp = ce + 1;
+                }
+            }
+        }
+        bool ruleMatches = appBelongsToSomeRule
             && strcmp(ruleNetworkType, networkType) == 0
             && strcmp(ruleNetworkId, networkId) == 0;
         if (ruleMatches) {
