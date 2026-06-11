@@ -1,7 +1,7 @@
 #include "core/util.h"
 
 #include <windows.h>
-#include <bcrypt.h>
+#include "core/dyn_bcrypt.h"
 #include <psapi.h>
 
 #include <algorithm>
@@ -192,6 +192,7 @@ std::string urlDecode(const std::string& value) {
 }
 
 std::string sha256Hex(const std::string& value) {
+    if (!dyn_bcrypt::isAvailable()) return "";
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     DWORD objectLength = 0;
@@ -199,20 +200,20 @@ std::string sha256Hex(const std::string& value) {
     std::vector<unsigned char> object;
     std::vector<unsigned char> digest(32);
 
-    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) return "";
-    if (BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&objectLength), sizeof(objectLength), &dataLength, 0) != 0) {
-        BCryptCloseAlgorithmProvider(algorithm, 0);
+    if (dyn_bcrypt::fn_BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) return "";
+    if (dyn_bcrypt::fn_BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&objectLength), sizeof(objectLength), &dataLength, 0) != 0) {
+        dyn_bcrypt::fn_BCryptCloseAlgorithmProvider(algorithm, 0);
         return "";
     }
     object.resize(objectLength);
-    if (BCryptCreateHash(algorithm, &hash, object.data(), objectLength, nullptr, 0, 0) != 0) {
-        BCryptCloseAlgorithmProvider(algorithm, 0);
+    if (dyn_bcrypt::fn_BCryptCreateHash(algorithm, &hash, object.data(), objectLength, nullptr, 0, 0) != 0) {
+        dyn_bcrypt::fn_BCryptCloseAlgorithmProvider(algorithm, 0);
         return "";
     }
-    BCryptHashData(hash, reinterpret_cast<PUCHAR>(const_cast<char*>(value.data())), static_cast<ULONG>(value.size()), 0);
-    BCryptFinishHash(hash, digest.data(), static_cast<ULONG>(digest.size()), 0);
-    BCryptDestroyHash(hash);
-    BCryptCloseAlgorithmProvider(algorithm, 0);
+    dyn_bcrypt::fn_BCryptHashData(hash, reinterpret_cast<PUCHAR>(const_cast<char*>(value.data())), static_cast<ULONG>(value.size()), 0);
+    dyn_bcrypt::fn_BCryptFinishHash(hash, digest.data(), static_cast<ULONG>(digest.size()), 0);
+    dyn_bcrypt::fn_BCryptDestroyHash(hash);
+    dyn_bcrypt::fn_BCryptCloseAlgorithmProvider(algorithm, 0);
 
     std::ostringstream ss;
     ss << std::hex << std::setfill('0');

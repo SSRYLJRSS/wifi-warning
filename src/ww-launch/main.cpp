@@ -2,13 +2,44 @@
 #include <windows.h>
 #include <iphlpapi.h>
 #include <shellapi.h>
-#include <wlanapi.h>
+
 
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <wlanapi.h>  // type definitions only
+
+// Dynamic wlanapi.dll loader - avoids GPS permission association
+static HMODULE g_wlanDll = NULL;
+typedef DWORD (WINAPI *FnWlanOpenHandle)(DWORD, PVOID*, PDWORD, PHANDLE);
+typedef DWORD (WINAPI *FnWlanCloseHandle)(HANDLE, PVOID);
+typedef DWORD (WINAPI *FnWlanEnumInterfaces)(HANDLE, PVOID, PWLAN_INTERFACE_INFO_LIST*);
+typedef VOID  (WINAPI *FnWlanFreeMemory)(PVOID);
+typedef DWORD (WINAPI *FnWlanQueryInterface)(HANDLE, const GUID*, WLAN_INTF_OPCODE, PVOID, PDWORD, PVOID*, WLAN_OPCODE_VALUE_TYPE*);
+static FnWlanOpenHandle pWlanOpenHandle = NULL;
+static FnWlanCloseHandle pWlanCloseHandle = NULL;
+static FnWlanEnumInterfaces pWlanEnumInterfaces = NULL;
+static FnWlanFreeMemory pWlanFreeMemory = NULL;
+static FnWlanQueryInterface pWlanQueryInterface = NULL;
+
+static bool loadWlanApi() {
+    if (g_wlanDll) return true;
+    g_wlanDll = LoadLibraryW(L"wlanapi.dll");
+    if (!g_wlanDll) return false;
+    pWlanOpenHandle = (FnWlanOpenHandle)GetProcAddress(g_wlanDll, "WlanOpenHandle");
+    pWlanCloseHandle = (FnWlanCloseHandle)GetProcAddress(g_wlanDll, "WlanCloseHandle");
+    pWlanEnumInterfaces = (FnWlanEnumInterfaces)GetProcAddress(g_wlanDll, "WlanEnumInterfaces");
+    pWlanFreeMemory = (FnWlanFreeMemory)GetProcAddress(g_wlanDll, "WlanFreeMemory");
+    pWlanQueryInterface = (FnWlanQueryInterface)GetProcAddress(g_wlanDll, "WlanQueryInterface");
+    if (!pWlanOpenHandle || !pWlanCloseHandle || !pWlanEnumInterfaces || !pWlanFreeMemory || !pWlanQueryInterface) {
+        FreeLibrary(g_wlanDll);
+        g_wlanDll = NULL;
+        return false;
+    }
+    return true;
+}
 
 static char* dupRange(const char* begin, size_t len) {
     char* out = static_cast<char*>(malloc(len + 1));
@@ -246,10 +277,10 @@ static char* currentSsid() {
 
     HANDLE handle = nullptr;
     DWORD negotiated = 0;
-    if (WlanOpenHandle(2, nullptr, &negotiated, &handle) != ERROR_SUCCESS) return dupRange("", 0);
+    if (!loadWlanApi() || pWlanOpenHandle(2, nullptr, &negotiated, &handle) != ERROR_SUCCESS) return dupRange("", 0);
     PWLAN_INTERFACE_INFO_LIST interfaces = nullptr;
-    if (WlanEnumInterfaces(handle, nullptr, &interfaces) != ERROR_SUCCESS || !interfaces) {
-        WlanCloseHandle(handle, nullptr);
+    if (pWlanEnumInterfaces(handle, nullptr, &interfaces) != ERROR_SUCCESS || !interfaces) {
+        pWlanCloseHandle(handle, nullptr);
         return dupRange("", 0);
     }
     char* ssid = dupRange("", 0);
@@ -258,15 +289,15 @@ static char* currentSsid() {
         DWORD size = 0;
         PWLAN_CONNECTION_ATTRIBUTES attrs = nullptr;
         WLAN_OPCODE_VALUE_TYPE opcode{};
-        if (WlanQueryInterface(handle, &interfaces->InterfaceInfo[i].InterfaceGuid, wlan_intf_opcode_current_connection, nullptr, &size, reinterpret_cast<PVOID*>(&attrs), &opcode) == ERROR_SUCCESS && attrs) {
+        if (pWlanQueryInterface(handle, &interfaces->InterfaceInfo[i].InterfaceGuid, wlan_intf_opcode_current_connection, nullptr, &size, reinterpret_cast<PVOID*>(&attrs), &opcode) == ERROR_SUCCESS && attrs) {
             freeStr(ssid);
             DOT11_SSID dot11 = attrs->wlanAssociationAttributes.dot11Ssid;
             ssid = dupRange(reinterpret_cast<const char*>(dot11.ucSSID), dot11.uSSIDLength);
-            WlanFreeMemory(attrs);
+            pWlanFreeMemory(attrs);
         }
     }
-    WlanFreeMemory(interfaces);
-    WlanCloseHandle(handle, nullptr);
+    pWlanFreeMemory(interfaces);
+    pWlanCloseHandle(handle, nullptr);
     return ssid;
 }
 

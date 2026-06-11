@@ -11,7 +11,6 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shellapi.h>
-#include <winver.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -23,6 +22,7 @@
 
 namespace fs = std::filesystem;
 
+#include "core/dyn_version.h"
 namespace ww {
 
 ApiHandlers::ApiHandlers(ConfigManager& config, Logger& logger) : config_(config), logger_(logger) {}
@@ -231,12 +231,13 @@ static std::string trimNullTerminated(std::wstring value) {
 }
 
 static std::string versionField(const std::wstring& path, const wchar_t* key) {
+    if (!dyn_version::isAvailable()) return "";
     DWORD handle = 0;
-    DWORD size = GetFileVersionInfoSizeW(path.c_str(), &handle);
+    DWORD size = dyn_version::fn_GetFileVersionInfoSizeW(path.c_str(), &handle);
     if (!size) return "";
 
     std::vector<unsigned char> data(size);
-    if (!GetFileVersionInfoW(path.c_str(), handle, size, data.data())) return "";
+    if (!dyn_version::fn_GetFileVersionInfoW(path.c_str(), handle, size, data.data())) return "";
 
     struct Translation {
         WORD language;
@@ -246,7 +247,7 @@ static std::string versionField(const std::wstring& path, const wchar_t* key) {
     Translation* translations = nullptr;
     UINT translationBytes = 0;
     std::vector<Translation> candidates;
-    if (VerQueryValueW(data.data(), L"\\VarFileInfo\\Translation", reinterpret_cast<void**>(&translations), &translationBytes) && translations) {
+    if (dyn_version::fn_VerQueryValueW(data.data(), L"\\VarFileInfo\\Translation", reinterpret_cast<void**>(&translations), &translationBytes) && translations) {
         size_t count = translationBytes / sizeof(Translation);
         for (size_t i = 0; i < count; ++i) candidates.push_back(translations[i]);
     }
@@ -257,7 +258,7 @@ static std::string versionField(const std::wstring& path, const wchar_t* key) {
         std::swprintf(block, sizeof(block) / sizeof(block[0]), L"\\StringFileInfo\\%04x%04x\\%ls", item.language, item.codepage, key);
         wchar_t* value = nullptr;
         UINT valueChars = 0;
-        if (VerQueryValueW(data.data(), block, reinterpret_cast<void**>(&value), &valueChars) && value && valueChars) {
+        if (dyn_version::fn_VerQueryValueW(data.data(), block, reinterpret_cast<void**>(&value), &valueChars) && value && valueChars) {
             std::string text = trimNullTerminated(std::wstring(value, value + valueChars));
             if (!text.empty()) return text;
         }

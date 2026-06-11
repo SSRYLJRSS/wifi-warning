@@ -33,6 +33,9 @@ if ($Configuration -eq "Debug") {
 $serviceCoreSources = @(
   "src/core/auto_start.cpp",
   "src/core/config_manager.cpp",
+  "src/core/dyn_bcrypt.cpp",
+  "src/core/dyn_version.cpp",
+  "src/core/dyn_wlan.cpp",
   "src/core/http_probe.cpp",
   "src/core/json.cpp",
   "src/core/logger.cpp",
@@ -60,7 +63,7 @@ $smokeSources = @(
   "src/ui/api_handlers.cpp",
   "src/ui/http_server.cpp"
 )
-$libs = @("-Wl,--gc-sections", "-ladvapi32", "-lbcrypt", "-lcomdlg32", "-lgdi32", "-liphlpapi", "-lpsapi", "-lole32", "-lshell32", "-luuid", "-lversion", "-lwlanapi", "-lws2_32")
+$libs = @("-Wl,--gc-sections", "-ladvapi32", "-lcomdlg32", "-lgdi32", "-liphlpapi", "-lpsapi", "-lole32", "-lshell32", "-luuid", "-lws2_32")
 
 function Compile-Resource($name, $resource) {
   if (-not $resource) {

@@ -5,7 +5,8 @@
 
 #include <windows.h>
 #include <shellapi.h>
-#include <wlanapi.h>
+#include "core/dyn_wlan.h"
+#include <wlanapi.h>  // type definitions only; no function calls linked
 
 #include <chrono>
 #include <sstream>
@@ -31,12 +32,7 @@ static std::string authToString(DOT11_AUTH_ALGORITHM auth) {
     }
 }
 
-struct WlanHandle {
-    HANDLE handle = nullptr;
-    ~WlanHandle() {
-        if (handle) WlanCloseHandle(handle, nullptr);
-    }
-};
+// Using dyn_wlan::WlanHandle
 
 std::vector<AvailableWifiNetwork> listAvailableWifiNetworks() {
     std::vector<AvailableWifiNetwork> networks;
@@ -58,18 +54,19 @@ std::vector<AvailableWifiNetwork> listAvailableWifiNetworks() {
     }
 
     auto current = getCurrentWifi();
+    if (!dyn_wlan::isAvailable()) return networks;
     DWORD negotiated = 0;
-    WlanHandle wlan;
-    if (WlanOpenHandle(2, nullptr, &negotiated, &wlan.handle) != ERROR_SUCCESS) return networks;
+    dyn_wlan::WlanHandle wlan;
+    if (dyn_wlan::fn_WlanOpenHandle(2, nullptr, &negotiated, &wlan.handle) != ERROR_SUCCESS) return networks;
 
     PWLAN_INTERFACE_INFO_LIST interfaces = nullptr;
-    if (WlanEnumInterfaces(wlan.handle, nullptr, &interfaces) != ERROR_SUCCESS || !interfaces) return networks;
-    std::unique_ptr<WLAN_INTERFACE_INFO_LIST, decltype(&WlanFreeMemory)> interfaceGuard(interfaces, WlanFreeMemory);
+    if (dyn_wlan::fn_WlanEnumInterfaces(wlan.handle, nullptr, &interfaces) != ERROR_SUCCESS || !interfaces) return networks;
+    std::unique_ptr<WLAN_INTERFACE_INFO_LIST, decltype(&dyn_wlan::freeMemory)> interfaceGuard(interfaces, dyn_wlan::freeMemory);
 
     for (DWORD i = 0; i < interfaces->dwNumberOfItems; ++i) {
         PWLAN_AVAILABLE_NETWORK_LIST list = nullptr;
-        if (WlanGetAvailableNetworkList(wlan.handle, &interfaces->InterfaceInfo[i].InterfaceGuid, 0, nullptr, &list) != ERROR_SUCCESS || !list) continue;
-        std::unique_ptr<WLAN_AVAILABLE_NETWORK_LIST, decltype(&WlanFreeMemory)> listGuard(list, WlanFreeMemory);
+        if (dyn_wlan::fn_WlanGetAvailableNetworkList(wlan.handle, &interfaces->InterfaceInfo[i].InterfaceGuid, 0, nullptr, &list) != ERROR_SUCCESS || !list) continue;
+        std::unique_ptr<WLAN_AVAILABLE_NETWORK_LIST, decltype(&dyn_wlan::freeMemory)> listGuard(list, dyn_wlan::freeMemory);
         for (DWORD j = 0; j < list->dwNumberOfItems; ++j) {
             const auto& item = list->Network[j];
             std::string ssid = ssidToString(item.dot11Ssid);
@@ -208,9 +205,14 @@ WifiConnectResult connectToWifiDetailed(const std::string& ssid, const std::stri
         return outcome;
     }
 
+    if (!dyn_wlan::isAvailable()) {
+        outcome.status = "failed";
+        outcome.error = "无法打开 WLAN 服务";
+        return outcome;
+    }
     DWORD negotiated = 0;
-    WlanHandle wlan;
-    DWORD result = WlanOpenHandle(2, nullptr, &negotiated, &wlan.handle);
+    dyn_wlan::WlanHandle wlan;
+    DWORD result = dyn_wlan::fn_WlanOpenHandle(2, nullptr, &negotiated, &wlan.handle);
     if (result != ERROR_SUCCESS) {
         outcome.status = "failed";
         outcome.error = "无法打开 WLAN 服务";
@@ -218,13 +220,13 @@ WifiConnectResult connectToWifiDetailed(const std::string& ssid, const std::stri
     }
 
     PWLAN_INTERFACE_INFO_LIST interfaces = nullptr;
-    result = WlanEnumInterfaces(wlan.handle, nullptr, &interfaces);
+    result = dyn_wlan::fn_WlanEnumInterfaces(wlan.handle, nullptr, &interfaces);
     if (result != ERROR_SUCCESS || !interfaces || interfaces->dwNumberOfItems == 0) {
         outcome.status = "failed";
         outcome.error = "未检测到无线网卡";
         return outcome;
     }
-    std::unique_ptr<WLAN_INTERFACE_INFO_LIST, decltype(&WlanFreeMemory)> interfaceGuard(interfaces, WlanFreeMemory);
+    std::unique_ptr<WLAN_INTERFACE_INFO_LIST, decltype(&dyn_wlan::freeMemory)> interfaceGuard(interfaces, dyn_wlan::freeMemory);
     const auto& targetInterface = interfaces->InterfaceInfo[preferredInterfaceIndex(interfaces)];
 
     std::wstring profile = utf8ToWide(ssid);
@@ -237,7 +239,7 @@ WifiConnectResult connectToWifiDetailed(const std::string& ssid, const std::stri
     if (!password.empty()) {
         std::wstring xml = wifiProfileXml(ssid, password);
         DWORD reason = 0;
-        result = WlanSetProfile(wlan.handle, &targetInterface.InterfaceGuid, 0, xml.c_str(), nullptr, TRUE, nullptr, &reason);
+        result = dyn_wlan::fn_WlanSetProfile(wlan.handle, &targetInterface.InterfaceGuid, 0, xml.c_str(), nullptr, TRUE, nullptr, &reason);
         if (result != ERROR_SUCCESS) {
             outcome.native_dialog_opened = openNativeWifiFlyout();
             outcome.status = outcome.native_dialog_opened ? "native_dialog_opened" : "failed";
@@ -248,7 +250,7 @@ WifiConnectResult connectToWifiDetailed(const std::string& ssid, const std::stri
         }
     }
 
-    result = WlanConnect(wlan.handle, &targetInterface.InterfaceGuid, &params, nullptr);
+    result = dyn_wlan::fn_WlanConnect(wlan.handle, &targetInterface.InterfaceGuid, &params, nullptr);
     if (result == ERROR_SUCCESS) {
         if (waitForConnectedSsid(ssid)) {
             outcome.connected = true;
