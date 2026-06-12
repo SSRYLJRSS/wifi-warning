@@ -241,7 +241,9 @@ static int jsonInt(const char* text, size_t len, const char* key, int fallback) 
 }
 
 static bool hasActiveBypass(const char* config, size_t len) {
-    long long bypassUntil = atoll(config + valueStart(config, len, "bypass_until_epoch", 0, len));
+    size_t pos = valueStart(config, len, "bypass_until_epoch", 0, len);
+    if (pos == SIZE_MAX) return false;
+    long long bypassUntil = atoll(config + pos);
     if (bypassUntil <= 0) return false;
     time_t now = time(nullptr);
     return now < (time_t)bypassUntil;
@@ -339,8 +341,9 @@ static CurrentNetwork* getAllActiveNetworks(int* outCount) {
         networks[count].type = dupRange("wifi", 4);
         networks[count].id = ssid;
         ++count;
+    } else {
+        freeStr(ssid);
     }
-    freeStr(ssid);
 
     ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
     ULONG size = 16 * 1024;
