@@ -25,10 +25,13 @@ jobs:
           cat > release-notes.md <<EOF
           ## WiFi Warning ${VERSION} / WiFi 警告 ${VERSION}
 
-          - Fixes multiple rules sharing the same shortcut: only the last rule took effect before.
-          - Fixes multi-network blocking failure when a shortcut is managed by several rules simultaneously.
-          - 修复多条规则绑定同一快捷方式时仅最后一条生效的问题。
-          - 修复同一快捷方式被多条规则管理时，多网络匹配拦截失效的 bug。
+          v1.9.8 - 极端对抗性代码审阅修复:
+          - 递归目录扫描加深度限制(depth<=10)，防止符号链接环导致卡死
+          - JSON 解析器加递归深度上限(64层)，防止深度嵌套 JSON 栈溢出
+          - 日志统计接口限制最多返回500条记录，防止内存压力
+          - 配置写入改为原子操作(先写临时文件再重命名)，防止断电损坏
+          - 网络适配器缓冲区从16扩充到32，防止超量截断
+          - bypass 密码前端 SHA-256 哈希后再传输，后端兼容两种格式
           EOF
 
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
@@ -36,5 +39,6 @@ jobs:
           else
             gh release create "$TAG_NAME" release/WiFiWarning-portable.zip \
               --title "WiFi Warning ${TAG_NAME}" \
+              --latest \
               --notes-file release-notes.md
           fi
