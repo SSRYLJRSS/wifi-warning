@@ -231,7 +231,20 @@ AppConfig ConfigManager::load() {
 bool ConfigManager::save(const AppConfig& config) {
     std::lock_guard lock(mutex_);
     ensureDirectory(fs::path(path_).parent_path().wstring());
-    bool ok = writeTextFileUtf8(path_, stringifyJson(configToJson(config)));
+    std::string json = stringifyJson(configToJson(config));
+    // Write to temp file first, then atomically rename to avoid corruption on crash/power loss
+    fs::path tempPath(path_);
+    tempPath += L".tmp";
+    bool ok = writeTextFileUtf8(tempPath.wstring(), json);
+    if (ok) {
+        std::error_code ec;
+        fs::rename(tempPath, fs::path(path_), ec);
+        if (ec) {
+            // Fallback: direct write if rename fails (e.g. cross-device)
+            ok = writeTextFileUtf8(path_, json);
+            fs::remove(tempPath, ec);
+        }
+    }
     if (ok) {
         cached_ = config;
         loaded_ = true;

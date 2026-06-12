@@ -94,8 +94,9 @@ async function initWarning() {
   document.getElementById("bypassForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
+      const hashedPassword = await sha256(document.getElementById("password").value);
       await Api.bypass({
-        password: document.getElementById("password").value,
+        password: hashedPassword,
         app: appPath,
         app_args: appArgs,
         rule_id: query.ruleId

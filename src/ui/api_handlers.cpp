@@ -206,7 +206,10 @@ HttpResponse ApiHandlers::bypass(const std::string& body) {
     auto config = config_.load();
 
     if (config.settings.bypass_password.empty()) return errorResponse("尚未设置临时允许密码", 403);
-    if (sha256Hex(password) != config.settings.bypass_password) return errorResponse("密码不正确", 403);
+    // Accept either pre-hashed password (64 hex chars from frontend) or raw password (backward compat)
+    std::string passwordHash = (password.size() == 64 && password.find_first_not_of("0123456789abcdef") == std::string::npos)
+        ? password : sha256Hex(password);
+    if (passwordHash != config.settings.bypass_password) return errorResponse("密码不正确", 403);
 
     // Set bypass_until_epoch so rule_engine and ww-launch will allow during this window
     int timeoutMin = config.settings.bypass_timeout_minutes > 0 ? config.settings.bypass_timeout_minutes : 30;

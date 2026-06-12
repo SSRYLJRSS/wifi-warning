@@ -318,7 +318,7 @@ static void freeNetwork(CurrentNetwork* network) {
 
 
 static CurrentNetwork* getAllActiveNetworks(int* outCount) {
-    CurrentNetwork* networks = static_cast<CurrentNetwork*>(malloc(sizeof(CurrentNetwork) * 16));
+    CurrentNetwork* networks = static_cast<CurrentNetwork*>(malloc(sizeof(CurrentNetwork) * 32));
     if (!networks) return nullptr;
     int count = 0;
 
@@ -359,7 +359,7 @@ static CurrentNetwork* getAllActiveNetworks(int* outCount) {
         for (IP_ADAPTER_ADDRESSES* item = addresses; item; item = item->Next) {
             if (item->IfType != IF_TYPE_ETHERNET_CSMACD) continue;
             if (item->OperStatus != IfOperStatusUp || !item->FirstUnicastAddress) continue;
-            if (count < 16) {
+            if (count < 32) {
                 networks[count].type = dupRange("wired", 5);
                 networks[count].id = item->FriendlyName ? wideToUtf8(item->FriendlyName) : dupRange(item->AdapterName ? item->AdapterName : "", strlen(item->AdapterName ? item->AdapterName : ""));
                 ++count;

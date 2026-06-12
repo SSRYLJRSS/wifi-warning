@@ -107,13 +107,14 @@ JsonValue Logger::statsJson(int days) const {
     JsonValue::Array rows;
     std::string today = dateStampLocal();
 
+    const size_t maxRows = 500;
     for (const auto& record : records) {
         if (record.action == "blocked") {
             ++blockedWeek;
             if (record.timestamp.rfind(today, 0) == 0) ++blockedToday;
             if (!record.app.empty()) ++appCounts[record.app];
         }
-        rows.push_back(recordToJson(record));
+        if (rows.size() < maxRows) rows.push_back(recordToJson(record));
     }
 
     std::string topApp;

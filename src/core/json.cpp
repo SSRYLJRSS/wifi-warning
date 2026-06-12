@@ -57,6 +57,7 @@ public:
 private:
     const std::string& text_;
     size_t pos_ = 0;
+    int depth_ = 0;
     std::string message_;
 
     std::optional<JsonValue> fail(std::string* error) {
@@ -172,15 +173,17 @@ private:
 
     std::optional<JsonValue> parseArray() {
         consume('[');
+        if (++depth_ > 64) { --depth_; message_ = "JSON nesting too deep"; return std::nullopt; }
         JsonValue::Array array;
         skipWhitespace();
-        if (consume(']')) return JsonValue(array);
+        if (consume(']')) { --depth_; return JsonValue(array); }
         while (true) {
             auto value = parseValue();
-            if (!value) return std::nullopt;
+            if (!value) { --depth_; return std::nullopt; }
             array.push_back(*value);
-            if (consume(']')) return JsonValue(array);
+            if (consume(']')) { --depth_; return JsonValue(array); }
             if (!consume(',')) {
+                --depth_;
                 message_ = "Expected comma in array";
                 return std::nullopt;
             }
@@ -189,22 +192,25 @@ private:
 
     std::optional<JsonValue> parseObject() {
         consume('{');
+        if (++depth_ > 64) { --depth_; message_ = "JSON nesting too deep"; return std::nullopt; }
         JsonValue::Object object;
         skipWhitespace();
-        if (consume('}')) return JsonValue(object);
+        if (consume('}')) { --depth_; return JsonValue(object); }
         while (true) {
             skipWhitespace();
             auto key = parseString();
-            if (!key) return std::nullopt;
+            if (!key) { --depth_; return std::nullopt; }
             if (!consume(':')) {
+                --depth_;
                 message_ = "Expected colon in object";
                 return std::nullopt;
             }
             auto value = parseValue();
-            if (!value) return std::nullopt;
+            if (!value) { --depth_; return std::nullopt; }
             object[key->asString()] = *value;
-            if (consume('}')) return JsonValue(object);
+            if (consume('}')) { --depth_; return JsonValue(object); }
             if (!consume(',')) {
+                --depth_;
                 message_ = "Expected comma in object";
                 return std::nullopt;
             }

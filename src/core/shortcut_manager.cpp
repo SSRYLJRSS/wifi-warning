@@ -175,6 +175,7 @@ std::vector<ShortcutCandidate> findShortcutsForApp(const std::string& targetExe)
         fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
         fs::recursive_directory_iterator end;
         while (!ec && it != end) {
+            if (it.depth() > 10) { it.disable_recursion_pending(); ec.clear(); it.increment(ec); continue; }
             const auto entry = *it;
             std::error_code entryEc;
             if (entry.is_regular_file(entryEc) && toLowerAscii(wideToUtf8(entry.path().extension().wstring())) == ".lnk") {
