@@ -4,6 +4,8 @@
 #include "core/util.h"
 #include "core/wifi_detector.h"
 #include "core/network_manager.h"
+#include "core/dyn_wlan.h"
+#include <wlanapi.h>
 #include "resources/resource.h"
 #include "ui/browser_launcher.h"
 
@@ -12,8 +14,47 @@
 
 #include <thread>
 #include <vector>
+#include <atomic>
 
 namespace ww {
+
+// Global event for WLAN notification signal — replaces 5-second blind polling.
+// When WiFi state changes, the WLAN callback sets this event, waking the poller.
+// A periodic timer (60s) also signals as a safety net for edge cases.
+static HANDLE g_wifiChangeEvent = nullptr;
+
+// WLAN notification callback — invoked by Windows when WiFi connection state changes.
+// This is the proper event-driven approach: no need to poll every 5 seconds.
+static VOID CALLBACK wlanNotificationCallback(
+    PWLAN_NOTIFICATION_DATA pData,
+    PVOID pContext) {
+    if (!pData) return;
+    // We only care about ACM (Auto Configuration Module) notifications
+    // which signal connection/disconnection events
+    if (pData->NotificationSource == WLAN_NOTIFICATION_SOURCE_ACM) {
+        // Signal the poller to refresh
+        if (g_wifiChangeEvent) {
+            SetEvent(g_wifiChangeEvent);
+        }
+    }
+}
+
+// Register WLAN notification callback on the WLAN handle.
+// WlanRegisterNotification registers globally for ALL interfaces on the handle,
+// not per-interface. Returns true if registration succeeded.
+static bool registerWlanNotification(HANDLE wlanHandle) {
+    if (!dyn_wlan::fn_WlanRegisterNotification) return false;
+    DWORD result = dyn_wlan::fn_WlanRegisterNotification(
+        wlanHandle,
+        WLAN_NOTIFICATION_SOURCE_ACM,  // Only connection events, not scan results
+        TRUE,                            // bIgnoreDuplicate = true (dedup rapid events)
+        reinterpret_cast<PVOID>(wlanNotificationCallback),
+        nullptr,                         // pCallbackContext
+        nullptr,                         // pCallbackPrevContext
+        nullptr                          // pdwNegotiatedVersion (optional)
+    );
+    return result == ERROR_SUCCESS;
+}
 
 static constexpr UINT WM_TRAY = WM_APP + 1;
 static constexpr UINT ID_SETTINGS = 1001;
@@ -257,6 +298,8 @@ TrayIcon::TrayIcon(ConfigManager& config, Logger& logger, int port) : impl_(std:
 
 TrayIcon::~TrayIcon() {
     impl_->running = false;
+    // Wake poller from WaitForSingleObject so it exits promptly (< 1s)
+    if (g_wifiChangeEvent) SetEvent(g_wifiChangeEvent);
     if (impl_->poller.joinable()) impl_->poller.join();
     if (impl_->icon_added) Shell_NotifyIconW(NIM_DELETE, &impl_->nid);
     if (impl_->icon) DestroyIcon(impl_->icon);
@@ -322,13 +365,55 @@ int TrayIcon::run(int selfTestMs, const std::wstring& readyFile, int selfTestCom
         PostMessageW(impl_->hwnd, WM_COMMAND, static_cast<WPARAM>(selfTestCommand), 0);
     }
 
+    // Event-driven poller: waits for WLAN state change signal instead of
+    // polling every 5 seconds. This eliminates the persistent "Location in use"
+    // indicator caused by frequent WlanOpenHandle/WlanEnumInterfaces calls.
+    // Falls back to 60-second periodic refresh as safety net.
+    g_wifiChangeEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     impl_->poller = std::thread([this] {
+        // Initial query with cache priming
+        auto wifi = getCurrentWifi();
+        updateWifiText(wifi);
+        impl_->cached_wired_adapters = listWiredAdapters();
+
+        // Try to register WLAN notification callback for event-driven refresh.
+        // The WLAN handle must remain open for the lifetime of the callback,
+        // so we allocate it on the heap and let the poller thread clean it up on exit.
+        // WlanRegisterNotification is handle-global (all interfaces), so register once.
+        auto* wlanHolder = new dyn_wlan::WlanHandle();
+        if (dyn_wlan::isAvailable()) {
+            DWORD negotiated = 0;
+            if (dyn_wlan::fn_WlanOpenHandle(2, nullptr, &negotiated, &wlanHolder->handle) == ERROR_SUCCESS) {
+                registerWlanNotification(wlanHolder->handle);
+            }
+        }
+
         while (impl_->running) {
-            auto wifi = getCurrentWifi();
-            updateWifiText(wifi);
-            impl_->cached_wired_adapters = listWiredAdapters();
-            trimCurrentProcessWorkingSet();
-            Sleep(5000);
+            // Wait for WLAN change event, with 60-second timeout as safety net
+            DWORD waitResult = WaitForSingleObject(g_wifiChangeEvent, 60000);
+
+            if (!impl_->running) break;
+
+            if (waitResult == WAIT_OBJECT_0 || waitResult == WAIT_TIMEOUT) {
+                // Reset the event (manual-reset)
+                ResetEvent(g_wifiChangeEvent);
+
+                // Refresh WiFi cache (may be cached internally for 30s TTL,
+                // but we signal it to refresh now since a real event occurred)
+                refreshWifiCache();
+                auto wifi = getCurrentWifi();
+                updateWifiText(wifi);
+                impl_->cached_wired_adapters = listWiredAdapters();
+                trimCurrentProcessWorkingSet();
+            }
+        }
+
+        // Cleanup: close WLAN handle (unregisters callback implicitly)
+        delete wlanHolder;
+        // Cleanup: event handle
+        if (g_wifiChangeEvent) {
+            CloseHandle(g_wifiChangeEvent);
+            g_wifiChangeEvent = nullptr;
         }
     });
 

@@ -15,6 +15,8 @@ struct WifiStatus {
 };
 
 WifiStatus getCurrentWifi();
+// Force refresh WiFi status cache (called on WLAN notification)
+void refreshWifiCache();
 bool isNoWifiAdapter(const WifiStatus& status);
 std::vector<std::string> getKnownWifiProfiles();
 

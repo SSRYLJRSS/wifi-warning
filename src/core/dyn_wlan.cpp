@@ -12,6 +12,7 @@ FnWlanGetAvailableNetworkList fn_WlanGetAvailableNetworkList = nullptr;
 FnWlanGetProfileList fn_WlanGetProfileList = nullptr;
 FnWlanSetProfile fn_WlanSetProfile = nullptr;
 FnWlanConnect fn_WlanConnect = nullptr;
+FnWlanRegisterNotification fn_WlanRegisterNotification = nullptr;
 
 static WlanDll g_wlanDll;
 
@@ -37,6 +38,7 @@ bool WlanDll::load() {
     LOAD_FN(fn_WlanGetProfileList, "WlanGetProfileList");
     LOAD_FN(fn_WlanSetProfile, "WlanSetProfile");
     LOAD_FN(fn_WlanConnect, "WlanConnect");
+    LOAD_FN(fn_WlanRegisterNotification, "WlanRegisterNotification");
 
     #undef LOAD_FN
 
@@ -54,6 +56,7 @@ void WlanDll::unload() {
         fn_WlanGetProfileList = nullptr;
         fn_WlanSetProfile = nullptr;
         fn_WlanConnect = nullptr;
+        fn_WlanRegisterNotification = nullptr;
         FreeLibrary(dll);
         dll = nullptr;
     }

@@ -6,11 +6,34 @@
 #include "core/dyn_wlan.h"
 #include <wlanapi.h>  // type definitions only; no function calls linked
 
+#include <atomic>
+#include <chrono>
 #include <memory>
 
 namespace ww {
 
-// Using dyn_wlan::WlanHandle
+// TTL cache to avoid triggering Windows location service indicator every call.
+// The WLAN API (WlanOpenHandle/WlanEnumInterfaces/WlanQueryInterface) is classified
+// as a location-related API by Windows because WiFi BSSID can be used for geolocation.
+// Polling these APIs every few seconds causes the system to permanently show
+// "Location in use: wifi-warning" in the taskbar.
+// By caching results with a 30-second TTL, we reduce API calls from ~every 5s
+// to ~every 30s, and in practice only when the poller requests a refresh.
+
+static constexpr int CACHE_TTL_SECONDS = 30;
+
+static std::atomic<std::int64_t> g_wifiCacheTimestamp{0};
+static std::atomic<int> g_wifiCacheConnected{0};
+static std::string g_wifiCacheSsid;
+static std::string g_wifiCacheInterfaceDescription;
+static std::atomic<int> g_wifiCacheAdapterAvailable{0};
+static std::string g_wifiCacheError;
+static std::mutex g_wifiCacheMutex;
+
+static std::int64_t steadyNowSeconds() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 static std::string ssidToString(const DOT11_SSID& ssid) {
     if (ssid.uSSIDLength == 0) return "";
@@ -29,7 +52,8 @@ static std::wstring testSsidOverride() {
     return getEnvWide(L"WW_TEST_CURRENT_SSID");
 }
 
-WifiStatus getCurrentWifi() {
+// Internal implementation that bypasses cache
+static WifiStatus queryWifiUncached() {
     WifiStatus status;
     std::wstring testSsid = testSsidOverride();
     if (!testSsid.empty()) {
@@ -91,6 +115,48 @@ WifiStatus getCurrentWifi() {
     }
 
     return status;
+}
+
+// Write result to cache
+static void updateCache(const WifiStatus& status) {
+    std::lock_guard<std::mutex> lock(g_wifiCacheMutex);
+    g_wifiCacheTimestamp.store(steadyNowSeconds());
+    g_wifiCacheConnected.store(status.connected ? 1 : 0);
+    g_wifiCacheAdapterAvailable.store(status.adapter_available ? 1 : 0);
+    g_wifiCacheSsid = status.ssid;
+    g_wifiCacheInterfaceDescription = status.interface_description;
+    g_wifiCacheError = status.error;
+}
+
+// Read result from cache; returns true if cache is valid
+static bool readFromCache(WifiStatus& status) {
+    std::int64_t ts = g_wifiCacheTimestamp.load();
+    if (ts == 0 || (steadyNowSeconds() - ts) > CACHE_TTL_SECONDS) return false;
+    std::lock_guard<std::mutex> lock(g_wifiCacheMutex);
+    status.connected = g_wifiCacheConnected.load() != 0;
+    status.adapter_available = g_wifiCacheAdapterAvailable.load() != 0;
+    status.ssid = g_wifiCacheSsid;
+    status.interface_description = g_wifiCacheInterfaceDescription;
+    status.error = g_wifiCacheError;
+    return true;
+}
+
+WifiStatus getCurrentWifi() {
+    // Return cached result if still fresh (within TTL)
+    WifiStatus cached;
+    if (readFromCache(cached)) return cached;
+
+    // Cache miss or expired — query WLAN API
+    WifiStatus status = queryWifiUncached();
+    updateCache(status);
+    return status;
+}
+
+// Force refresh: bypass cache and update immediately.
+// Called when WLAN notification signals a connection change.
+void refreshWifiCache() {
+    WifiStatus status = queryWifiUncached();
+    updateCache(status);
 }
 
 bool isNoWifiAdapter(const WifiStatus& status) {

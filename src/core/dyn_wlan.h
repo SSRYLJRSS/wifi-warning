@@ -29,6 +29,9 @@ typedef DWORD (WINAPI *FnWlanGetProfileList)(HANDLE, const GUID*, PVOID, WLAN_PR
 typedef DWORD (WINAPI *FnWlanSetProfile)(HANDLE, const GUID*, DWORD, LPCWSTR, PVOID, BOOL, PVOID, DWORD*);
 typedef DWORD (WINAPI *FnWlanConnect)(HANDLE, const GUID*, const WLAN_CONNECTION_PARAMETERS*, PVOID);
 
+// WLAN notification callback - enables event-driven WiFi monitoring instead of polling
+typedef DWORD (WINAPI *FnWlanRegisterNotification)(HANDLE, DWORD, BOOL, PVOID, PVOID, PVOID, PVOID*);
+
 extern FnWlanOpenHandle fn_WlanOpenHandle;
 extern FnWlanCloseHandle fn_WlanCloseHandle;
 extern FnWlanEnumInterfaces fn_WlanEnumInterfaces;
@@ -38,6 +41,7 @@ extern FnWlanGetAvailableNetworkList fn_WlanGetAvailableNetworkList;
 extern FnWlanGetProfileList fn_WlanGetProfileList;
 extern FnWlanSetProfile fn_WlanSetProfile;
 extern FnWlanConnect fn_WlanConnect;
+extern FnWlanRegisterNotification fn_WlanRegisterNotification;
 
 struct WlanDll {
     HMODULE dll = nullptr;

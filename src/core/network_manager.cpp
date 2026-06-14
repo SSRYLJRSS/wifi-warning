@@ -9,11 +9,43 @@
 #include <shellapi.h>
 
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include <atomic>
+#include <chrono>
+
 namespace ww {
+
+
+// TTL cache for listWiredAdapters() — reduces GetAdaptersAddresses + netsh calls
+// that can also contribute to Windows location service indicators.
+static constexpr int ADAPTER_CACHE_TTL_SECONDS = 30;
+
+static std::atomic<std::int64_t> g_adapterCacheTimestamp{0};
+static std::vector<WiredAdapter> g_adapterCacheList;
+static std::mutex g_adapterCacheMutex;
+
+static std::int64_t steadyNowSeconds() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static bool readAdapterCache(std::vector<WiredAdapter>& out) {
+    std::int64_t ts = g_adapterCacheTimestamp.load();
+    if (ts == 0 || (steadyNowSeconds() - ts) > ADAPTER_CACHE_TTL_SECONDS) return false;
+    std::lock_guard<std::mutex> lock(g_adapterCacheMutex);
+    out = g_adapterCacheList;
+    return true;
+}
+
+static void writeAdapterCache(const std::vector<WiredAdapter>& list) {
+    std::lock_guard<std::mutex> lock(g_adapterCacheMutex);
+    g_adapterCacheList = list;
+    g_adapterCacheTimestamp.store(steadyNowSeconds());
+}
 
 static std::string trimAscii(std::string value) {
     while (!value.empty() && (value.back() == '\r' || value.back() == '\n' || value.back() == ' ' || value.back() == '\t')) {
@@ -88,8 +120,15 @@ static std::string operStatusString(IF_OPER_STATUS status) {
 }
 
 std::vector<WiredAdapter> listWiredAdapters() {
+    // Return cached result if fresh
+    std::vector<WiredAdapter> cached;
+    if (readAdapterCache(cached)) return cached;
+
     auto testAdapters = testWiredAdapters();
-    if (!testAdapters.empty()) return testAdapters;
+    if (!testAdapters.empty()) {
+        writeAdapterCache(testAdapters);
+        return testAdapters;
+    }
 
     std::vector<WiredAdapter> adapters;
 
@@ -304,6 +343,7 @@ pass3:
         adapters = std::move(filtered);
     }
 
+    writeAdapterCache(adapters);
     return adapters;
 }
 
