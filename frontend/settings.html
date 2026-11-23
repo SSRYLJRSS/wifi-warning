@@ -4,11 +4,12 @@
     <meta charset="utf-8">
     <title>WiFi 提醒</title>
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/theme.css">
   </head>
   <body class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <span class="brand-mark">!</span>
+        <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"><path d="M2.5 8.5a14 14 0 0 1 19 0"/><path d="M5.5 12a9.5 9.5 0 0 1 13 0"/><path d="M8.5 15.4a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="1.4" fill="#fff" stroke="none"/></svg></span>
         <div>
           <strong data-i18n="appName">WiFi 提醒</strong>
           <span id="currentSsid">检测中</span>
@@ -30,10 +31,6 @@
       <label class="switch-row">
         <span data-i18n="autoStart">开机启动</span>
         <input id="autoStartToggle" type="checkbox">
-      </label>
-      <label class="switch-row">
-        <span data-i18n="darkMode">深色</span>
-        <input id="darkToggle" type="checkbox">
       </label>
 
       <div class="language-links" aria-label="Language">
