@@ -46,7 +46,9 @@ NetworkStatus getCurrentNetwork();
 std::vector<NetworkIdentity> getActiveNetworks();
 bool isNoNetworkAdapter(const NetworkStatus& status);
 std::vector<WiredAdapter> listWiredAdapters();
+std::vector<WiredAdapter> listWifiAdapters();
 NetworkActionResult setWiredAdapterEnabled(const std::string& adapterId, bool enabled);
+NetworkActionResult setAdapterEnabled(const std::string& type, const std::string& adapterId, bool enabled);
 
 JsonValue networkStatusJson(const NetworkStatus& status);
 JsonValue wiredAdaptersJson();

@@ -51,16 +51,36 @@
             <h1 data-i18n="ruleIntro">三步完成管控</h1>
           </div>
           <div class="header-actions">
-            <button id="restoreAllShortcutsButton" class="ghost-button" type="button" data-i18n="restoreAllShortcuts">一键恢复快捷方式</button>
             <button id="addRuleButton" class="primary-button" type="button" data-i18n="addRule">新建规则</button>
           </div>
         </header>
+
+        <section class="settings-card intercept-card">
+          <div class="subhead-row">
+            <div>
+              <h2 data-i18n="interceptTitle">拦截状态（IFEO）</h2>
+              <p class="muted" data-i18n="interceptMuted">通过 IFEO 映像劫持拦截软件启动，需要管理员权限写入注册表；未生效项会在应用后补齐。</p>
+            </div>
+            <span id="interceptBadge" class="status-badge">—</span>
+          </div>
+          <div class="metric-grid intercept-metrics">
+            <div class="metric"><span data-i18n="interceptActive">拦截状态</span><strong id="interceptActive">—</strong></div>
+            <div class="metric"><span data-i18n="interceptDesired">已托管软件</span><strong id="interceptDesired">0</strong></div>
+            <div class="metric"><span data-i18n="interceptMissing">未生效</span><strong id="interceptMissing">0</strong></div>
+          </div>
+          <div id="interceptMissingList" class="missing-exe-list"></div>
+          <div class="editor-actions">
+            <button id="applyInterceptButton" class="primary-button" type="button" data-i18n="interceptApply">立即应用/修复拦截</button>
+            <button id="restoreInterceptButton" class="ghost-button" type="button" data-i18n="interceptRestore">完全还原</button>
+            <button id="refreshInterceptButton" class="ghost-button" type="button" data-i18n="refresh">刷新</button>
+          </div>
+        </section>
 
         <section class="settings-card workflow-card">
           <div class="subhead-row">
             <div>
               <h2 id="ruleFormTitle">添加规则</h2>
-              <p class="muted" data-i18n="ruleIntroMuted">选好网络和软件组后，程序会替换该软件组里选中的快捷方式。名称、图标和位置保持不变。</p>
+              <p class="muted" data-i18n="ruleIntroMuted">选好网络和软件组后，程序会用 IFEO 映像劫持拦截该软件组里的软件。软件名、图标和位置保持不变。</p>
             </div>
           </div>
 
@@ -104,7 +124,7 @@
         <header class="panel-header">
           <div>
             <p class="eyebrow" data-i18n="softwareGroups">软件组</p>
-            <h1 data-i18n="groupsTitle">快捷方式黑名单</h1>
+            <h1 data-i18n="groupsTitle">软件黑名单</h1>
           </div>
           <button id="newGroupButton" class="primary-button" type="button" data-i18n="newGroup">新建软件组</button>
         </header>
@@ -113,7 +133,7 @@
           <div class="subhead-row">
             <div>
               <h2 data-i18n="softwareGroups">软件组</h2>
-              <p class="muted" data-i18n="groupsMuted">用系统文件浏览器选择需要替换的 .lnk 快捷方式；程序会沿用原快捷方式的名称、图标和位置。</p>
+              <p class="muted" data-i18n="groupsMuted">用系统文件浏览器选择要管控的 .exe 程序；程序会为这些程序写入 IFEO 拦截。</p>
             </div>
           </div>
 
@@ -124,11 +144,11 @@
               <input id="groupName" data-i18n-placeholder="groupNamePlaceholder" placeholder="例如 娱乐软件">
             </label>
             <label>
-              <span data-i18n="groupShortcuts">组内快捷方式</span>
-              <div id="groupShortcutList" class="selected-shortcut-list"></div>
+              <span data-i18n="groupApps">组内软件（.exe）</span>
+              <div id="groupAppList" class="selected-app-list"></div>
             </label>
             <div class="editor-actions">
-              <button class="ghost-button" type="button" id="browseGroupShortcuts" data-i18n="chooseShortcuts">选择快捷方式</button>
+              <button class="ghost-button" type="button" id="browseGroupApps" data-i18n="chooseApps">选择软件</button>
               <button class="ghost-button" type="button" id="cancelGroupEdit" data-i18n="cancel">取消</button>
               <button class="primary-button" type="submit" data-i18n="saveGroup">保存软件组</button>
             </div>
@@ -198,7 +218,7 @@
           <p data-i18n="version">版本 1.9.5</p>
           <p data-i18n="license">开源许可：MIT License</p>
           <p>GitHub: <a href="https://github.com/SSRYLJRSS/wifi-warning" target="_blank" rel="noreferrer">SSRYLJRSS/wifi-warning</a></p>
-          <p class="muted" data-i18n="aboutMuted">本地运行的 Windows 网络提醒工具。配置保存在当前 Windows 用户目录，快捷方式备份保存在软件本体所在目录。</p>
+          <p class="muted" data-i18n="aboutMuted">本地运行的 Windows 网络提醒工具。配置保存在当前 Windows 用户目录。</p>
           <div class="path-line" id="configPath"></div>
           <div class="path-line" id="backupPath"></div>
         </div>

@@ -2,7 +2,7 @@
 
 #include "core/auto_start.h"
 #include "core/network_manager.h"
-#include "core/shortcut_manager.h"
+#include "core/ifeo_manager.h"
 #include "core/util.h"
 #include "core/wifi_detector.h"
 #include "core/wifi_switcher.h"
@@ -59,27 +59,281 @@ bool ApiHandlers::handle(const HttpRequest& request, HttpResponse& response) {
     else if (request.path == "/api/stats" && request.method == "GET") response = stats();
     else if (request.path == "/api/bypass" && request.method == "POST") response = bypass(request.body);
     else if (request.path == "/api/apps/browse" && request.method == "POST") response = appBrowse();
-    else if (request.path == "/api/shortcuts/browse" && request.method == "POST") response = shortcutBrowse();
-    else if (request.path == "/api/shortcuts/read" && request.method == "POST") response = shortcutRead(request.body);
     else if (request.path == "/api/apps/icon" && request.method == "GET") response = appIcon(request);
     else if (request.path == "/api/apps/status" && request.method == "GET") response = appStatus();
     else if (request.path == "/api/apps/cleanup" && request.method == "POST") response = appCleanup(request.body);
-    else if (request.path == "/api/shortcuts/scan" && request.method == "POST") response = shortcutScan(request.body);
-    else if (request.path == "/api/shortcuts/replace" && request.method == "POST") response = shortcutReplace(request.body);
-    else if (request.path == "/api/shortcuts/restore" && request.method == "POST") response = restoreShortcuts(request.body);
+    else if (request.path == "/api/network/summary" && request.method == "GET") response = networkSummary();
+    else if (request.path == "/api/network/adapter/disable" && request.method == "POST") response = adapterToggle(request.path, request.body);
+    else if (request.path == "/api/network/adapter/enable" && request.method == "POST") response = adapterToggle(request.path, request.body);
+    else if (request.path == "/api/network/restore-last" && request.method == "POST") response = restoreLast();
+    else if (request.path == "/api/intercept/status" && request.method == "GET") response = interceptStatus();
+    else if (request.path == "/api/intercept/apply" && request.method == "POST") response = interceptApply(request.body);
+    else if (request.path == "/api/intercept/restore" && request.method == "POST") response = interceptRestore(request.body);
     else return false;
     return true;
 }
 
+HttpResponse ApiHandlers::networkSummary() {
+    auto config = config_.get();
+    WifiStatus wifi = getCurrentWifi();
+    auto wifiAdapters = listWifiAdapters();
+    auto wired = listWiredAdapters();
+    bool wifiDisabledByUs = (config.network_state.last_disabled_type == "wifi" && !config.network_state.last_disabled_name.empty());
+    bool wifiPresent = !wifiAdapters.empty();
+    bool wifiEnabled = wifiPresent ? wifiAdapters[0].enabled : !wifiDisabledByUs;
+    std::string wifiIface = wifi.interface_description;
+    if (wifiPresent) { if (wifiIface.empty()) wifiIface = wifiAdapters[0].name; }
+    else if (wifiDisabledByUs) wifiIface = config.network_state.last_disabled_name;
+    JsonValue::Object wifiObj{
+        {"available", wifi.adapter_available || wifiPresent || wifiDisabledByUs},
+        {"connected", wifi.connected},
+        {"enabled", wifiEnabled},
+        {"ssid", wifi.ssid},
+        {"signal", wifi.connected ? 4 : 0},
+        {"iface", wifiIface}
+    };
+    JsonValue::Array ethArray;
+    for (const auto& adapter : wired) {
+        ethArray.push_back(JsonValue::Object{
+            {"id", adapter.id}, {"name", adapter.name},
+            {"connected", adapter.connected}, {"enabled", adapter.enabled}
+        });
+    }
+    NetworkStatus current = getCurrentNetwork();
+    JsonValue::Object currentObj{{"type", current.type}, {"id", current.id}, {"name", current.name}};
+    return jsonResponse(JsonValue::Object{
+        {"ok", true}, {"wifi", wifiObj}, {"ethernet", ethArray}, {"current", currentObj}
+    });
+}
+
+HttpResponse ApiHandlers::adapterToggle(const std::string& path, const std::string& body) {
+    auto request = requestBodyJson(body);
+    const JsonValue* typeField = request.get("type");
+    const JsonValue* idField = request.get("id");
+    std::string type = typeField ? typeField->asString("wifi") : "wifi";
+    std::string id = idField ? idField->asString("") : "";
+    bool enabled = path.find("/enable") != std::string::npos;
+    if (id.empty()) {
+        if (type == "wifi") { auto w = listWifiAdapters(); if (!w.empty()) id = w[0].id; }
+        else { auto w = listWiredAdapters(); if (!w.empty()) id = w[0].id; }
+    }
+    if (id.empty()) return errorResponse("未找到可操作的适配器", 404);
+    auto result = setAdapterEnabled(type, id, enabled);
+    if (result.ok) {
+        config_.mutate([&](AppConfig& config) {
+            if (!enabled) {
+                config.network_state.last_disabled_type = type;
+                config.network_state.last_disabled_name = id;
+                config.network_state.last_disabled_epoch = nowUnixSeconds();
+            } else if (config.network_state.last_disabled_name == id) {
+                config.network_state.last_disabled_type.clear();
+                config.network_state.last_disabled_name.clear();
+                config.network_state.last_disabled_epoch = 0;
+            }
+        });
+    }
+    return jsonResponse(JsonValue::Object{
+        {"ok", result.ok},
+        {"adapter", JsonValue::Object{{"type", type}, {"id", id}, {"name", id}}},
+        {"error", result.ok ? std::string("") : result.error}
+    });
+}
+
+HttpResponse ApiHandlers::restoreLast() {
+    auto config = config_.get();
+    std::string type = config.network_state.last_disabled_type;
+    std::string name = config.network_state.last_disabled_name;
+    if (name.empty()) {
+        return jsonResponse(JsonValue::Object{{"ok", false}, {"error", std::string("没有可恢复的连接")}});
+    }
+    auto result = setAdapterEnabled(type, name, true);
+    if (result.ok) {
+        config_.mutate([&](AppConfig& c) {
+            c.network_state.last_disabled_type.clear();
+            c.network_state.last_disabled_name.clear();
+            c.network_state.last_disabled_epoch = 0;
+        });
+        return jsonResponse(JsonValue::Object{
+            {"ok", true},
+            {"restored", JsonValue::Object{{"type", type}, {"name", name}}}
+        });
+    }
+    return jsonResponse(JsonValue::Object{{"ok", false}, {"error", result.error}});
+}
+
+namespace {
+
+struct IfeoAdminRun {
+    bool missing = false;
+    bool cancelled = false;
+    bool launched = false;
+    int exitCode = -1;
+    std::string error;
+};
+
+IfeoAdminRun runIfeoAdmin(const wchar_t* parameters) {
+    IfeoAdminRun run;
+    std::wstring admin = std::wstring(executableDir()) + L"\\ww-admin.exe";
+    if (!fileExists(admin)) {
+        run.missing = true;
+        run.error = "未找到 ww-admin.exe";
+        return run;
+    }
+
+    // 清除上一次的运行结果，确保随后读到的是本次执行写出的文件。
+    std::error_code removeError;
+    fs::remove(fs::path(executableDir()) / L"ifeo-admin-result.json", removeError);
+
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+    sei.lpVerb = L"runas";
+    sei.lpFile = admin.c_str();
+    sei.lpParameters = parameters;
+    sei.nShow = SW_HIDE;
+    if (!ShellExecuteExW(&sei)) {
+        DWORD lastError = GetLastError();
+        if (lastError == ERROR_CANCELLED) {
+            run.cancelled = true;
+            run.error = "已取消管理员授权";
+        } else {
+            run.error = "启动 ww-admin.exe 失败（错误码 " + std::to_string(static_cast<unsigned long>(lastError)) + "）";
+        }
+        return run;
+    }
+
+    run.launched = true;
+    if (sei.hProcess) {
+        DWORD waitResult = WaitForSingleObject(sei.hProcess, 120000);
+        if (waitResult == WAIT_TIMEOUT) {
+            run.error = "等待提权助手超时";
+            run.exitCode = -1;
+        } else {
+            DWORD exitCode = 0;
+            GetExitCodeProcess(sei.hProcess, &exitCode);
+            run.exitCode = static_cast<int>(exitCode);
+        }
+        CloseHandle(sei.hProcess);
+    }
+    return run;
+}
+
+std::optional<JsonValue> readIfeoAdminResult() {
+    std::wstring path = std::wstring(executableDir()) + L"\\ifeo-admin-result.json";
+    std::string text = readTextFileUtf8(path);
+    if (text.empty()) return std::nullopt;
+    std::string error;
+    return parseJson(text, &error);
+}
+
+JsonValue ifeoStatusJson(const IfeoStatus& status, bool active) {
+    JsonValue::Array managedExes;
+    for (const auto& exe : status.managed_exes) managedExes.push_back(exe);
+    JsonValue::Array missingExes;
+    for (const auto& exe : status.missing_exes) missingExes.push_back(exe);
+    return JsonValue::Object{
+        {"ok", status.ok},
+        {"active", active},
+        {"mode", std::string("ifeo")},
+        {"elevated", status.elevated},
+        {"desired", status.desired},
+        {"missing", status.missing},
+        {"error", status.error},
+        {"managed_exes", managedExes},
+        {"missing_exes", missingExes}
+    };
+}
+
+} // namespace
+
+HttpResponse ApiHandlers::interceptStatus() {
+    auto config = config_.get();
+    IfeoStatus status = verifyIfeo(config);
+    JsonValue::Array managedExes;
+    for (const auto& exe : status.managed_exes) managedExes.push_back(exe);
+    JsonValue::Array missingExes;
+    for (const auto& exe : status.missing_exes) missingExes.push_back(exe);
+    return jsonResponse(JsonValue::Object{
+        {"ok", true},
+        {"active", config.settings.protection_enabled},
+        {"mode", std::string("ifeo")},
+        {"elevated", status.elevated},
+        {"desired", status.desired},
+        {"missing", status.missing},
+        {"managed_exes", managedExes},
+        {"missing_exes", missingExes}
+    });
+}
+
+HttpResponse ApiHandlers::interceptApply(const std::string& body) {
+    (void)body;
+    IfeoAdminRun run = runIfeoAdmin(L"--ifeo-sync");
+    if (run.missing) return errorResponse("未找到 ww-admin.exe", 200);
+    if (run.cancelled) return errorResponse("已取消管理员授权", 200);
+    if (!run.launched) return errorResponse(run.error, 200);
+
+    auto config = config_.get();
+    IfeoStatus status = verifyIfeo(config);
+
+    int applied = -1;
+    int already = -1;
+    int removed = -1;
+    std::string error;
+    bool ok = run.exitCode == 0;
+    if (auto result = readIfeoAdminResult(); result && result->isObject()) {
+        if (const JsonValue* value = result->get("ok")) ok = value->asBool(ok);
+        if (const JsonValue* value = result->get("applied")) applied = static_cast<int>(value->asNumber(0));
+        if (const JsonValue* value = result->get("already")) already = static_cast<int>(value->asNumber(0));
+        if (const JsonValue* value = result->get("removed")) removed = static_cast<int>(value->asNumber(0));
+        if (const JsonValue* value = result->get("error")) error = value->asString();
+    } else if (!ok) {
+        error = "ww-admin 退出码 " + std::to_string(run.exitCode);
+    }
+
+    return jsonResponse(JsonValue::Object{
+        {"ok", ok},
+        {"applied", applied},
+        {"already", already},
+        {"removed", removed},
+        {"error", error},
+        {"status", ifeoStatusJson(status, config.settings.protection_enabled)}
+    });
+}
+
+HttpResponse ApiHandlers::interceptRestore(const std::string& body) {
+    (void)body;
+    IfeoAdminRun run = runIfeoAdmin(L"--ifeo-restore");
+    if (run.missing) return errorResponse("未找到 ww-admin.exe", 200);
+    if (run.cancelled) return errorResponse("已取消管理员授权", 200);
+    if (!run.launched) return errorResponse(run.error, 200);
+
+    auto config = config_.get();
+    IfeoStatus status = verifyIfeo(config);
+
+    int removed = -1;
+    std::string error;
+    bool ok = run.exitCode == 0;
+    if (auto result = readIfeoAdminResult(); result && result->isObject()) {
+        if (const JsonValue* value = result->get("ok")) ok = value->asBool(ok);
+        if (const JsonValue* value = result->get("removed")) removed = static_cast<int>(value->asNumber(0));
+        if (const JsonValue* value = result->get("error")) error = value->asString();
+    } else if (!ok) {
+        error = "ww-admin 退出码 " + std::to_string(run.exitCode);
+    }
+
+    return jsonResponse(JsonValue::Object{
+        {"ok", ok},
+        {"removed", removed},
+        {"status", ifeoStatusJson(status, config.settings.protection_enabled)}
+    });
+}
+
 HttpResponse ApiHandlers::configGet() {
     auto config = config_.load();
-    if (reconcileShortcutRecords(config) > 0) config_.save(config);
-    fs::path backupRoot = fs::path(executableDir()) / L"shortcut-backups";
     return jsonResponse(JsonValue::Object{
         {"ok", true},
         {"config", configToJson(config)},
         {"config_path", wideToUtf8(config_.path())},
-        {"backup_path", wideToUtf8(backupRoot.wstring())},
         {"auto_start_registered", isAutoStartEnabled()}
     });
 }
@@ -88,24 +342,8 @@ HttpResponse ApiHandlers::configPost(const std::string& body) {
     JsonValue parsed = requestBodyJson(body);
     const JsonValue* configValue = parsed.get("config");
     if (!configValue) configValue = &parsed;
-    AppConfig previous = config_.load();
     AppConfig config = configFromJson(*configValue);
     if (config.settings.http_port <= 0) config.settings.http_port = 18765;
-
-    JsonValue::Array restoreResults;
-    if (previous.settings.protection_enabled && !config.settings.protection_enabled) {
-        std::vector<ShortcutOperationResult> results;
-        for (const auto& result : restoreAllShortcuts(previous)) {
-            results.push_back(result);
-            restoreResults.push_back(JsonValue::Object{
-                {"ok", result.ok},
-                {"shortcut", result.shortcut},
-                {"backup", result.backup},
-                {"error", result.error}
-            });
-        }
-        clearRestoredShortcutRecords(config, results);
-    }
 
     if (!config_.save(config)) return errorResponse("配置保存失败", 500);
     std::string autoStartError;
@@ -113,7 +351,6 @@ HttpResponse ApiHandlers::configPost(const std::string& body) {
     return jsonResponse(JsonValue::Object{
         {"ok", true},
         {"config", configToJson(config)},
-        {"restore_results", restoreResults},
         {"auto_start_synced", autoStartSynced},
         {"auto_start_registered", isAutoStartEnabled()},
         {"auto_start_error", autoStartError}
@@ -304,44 +541,6 @@ static std::optional<JsonValue::Array> testPickedApps() {
     return apps;
 }
 
-static std::optional<JsonValue::Array> testPickedShortcuts() {
-    std::wstring overrideJson = getEnvWide(L"WW_TEST_PICK_SHORTCUTS_JSON");
-    if (overrideJson.empty()) return std::nullopt;
-
-    std::string error;
-    auto parsed = parseJson(wideToUtf8(overrideJson), &error);
-    JsonValue::Array shortcuts;
-    if (!parsed) return shortcuts;
-    for (const auto& item : parsed->asArray()) {
-        std::string path;
-        if (item.isString()) {
-            path = item.asString();
-        } else if (const JsonValue* pathValue = item.get("path")) {
-            path = pathValue->asString();
-        }
-        if (path.empty()) continue;
-        ShortcutCandidate candidate;
-        if (readShortcutFile(path, candidate)) {
-            shortcuts.push_back(JsonValue::Object{
-                {"path", candidate.path},
-                {"target_path", candidate.target_path},
-                {"arguments", candidate.arguments},
-                {"working_dir", candidate.working_dir},
-                {"icon_path", candidate.icon_path},
-                {"icon_index", candidate.icon_index},
-                {"description", candidate.description}
-            });
-        } else {
-            shortcuts.push_back(JsonValue::Object{
-                {"path", path},
-                {"target_path", ""},
-                {"error", "读取快捷方式失败"}
-            });
-        }
-    }
-    return shortcuts;
-}
-
 static JsonValue::Array browseFiles(bool* cancelled, std::string* error, const wchar_t* title, const wchar_t* filter) {
     JsonValue::Array apps;
     *cancelled = false;
@@ -401,56 +600,6 @@ HttpResponse ApiHandlers::appBrowse() {
         {"cancelled", cancelled},
         {"apps", apps}
     });
-}
-
-static JsonValue shortcutCandidateJson(const ShortcutCandidate& shortcut) {
-    return JsonValue::Object{
-        {"path", shortcut.path},
-        {"target_path", shortcut.target_path},
-        {"arguments", shortcut.arguments},
-        {"working_dir", shortcut.working_dir},
-        {"icon_path", shortcut.icon_path},
-        {"icon_index", shortcut.icon_index},
-        {"description", shortcut.description}
-    };
-}
-
-HttpResponse ApiHandlers::shortcutBrowse() {
-    bool cancelled = false;
-    std::string error;
-    JsonValue::Array shortcuts;
-    if (auto testShortcuts = testPickedShortcuts()) {
-        shortcuts = *testShortcuts;
-    } else {
-        auto paths = browseFiles(&cancelled, &error, L"选择要替换的快捷方式", L"快捷方式 (*.lnk)\0*.lnk\0所有文件 (*.*)\0*.*\0\0");
-        if (!error.empty()) return errorResponse(error, 500);
-        for (const auto& pathValue : paths) {
-            ShortcutCandidate shortcut;
-            if (readShortcutFile(pathValue.asString(), shortcut)) {
-                shortcuts.push_back(shortcutCandidateJson(shortcut));
-            } else {
-                shortcuts.push_back(JsonValue::Object{
-                    {"path", pathValue.asString()},
-                    {"target_path", ""},
-                    {"error", "读取快捷方式失败"}
-                });
-            }
-        }
-    }
-    return jsonResponse(JsonValue::Object{
-        {"ok", true},
-        {"cancelled", cancelled},
-        {"shortcuts", shortcuts}
-    });
-}
-
-HttpResponse ApiHandlers::shortcutRead(const std::string& body) {
-    JsonValue parsed = requestBodyJson(body);
-    std::string shortcutPath = parsed.get("shortcut_path") ? parsed.get("shortcut_path")->asString() : "";
-    if (shortcutPath.empty()) return errorResponse("缺少快捷方式路径");
-    ShortcutCandidate shortcut;
-    if (!readShortcutFile(shortcutPath, shortcut)) return errorResponse("读取快捷方式失败", 404);
-    return jsonResponse(JsonValue::Object{{"ok", true}, {"shortcut", shortcutCandidateJson(shortcut)}});
 }
 
 static void appendByte(std::string& out, unsigned char value) {
@@ -670,8 +819,7 @@ HttpResponse ApiHandlers::appStatus() {
                 {"name", app.name},
                 {"path", app.original_path},
                 {"exists", exists},
-                {"missing", !exists},
-                {"replaced_shortcut_count", static_cast<int>(app.replaced_shortcuts.size())}
+                {"missing", !exists}
             });
         }
         rules.push_back(JsonValue::Object{
@@ -706,25 +854,6 @@ HttpResponse ApiHandlers::appCleanup(const std::string& body) {
             if (fileExists(utf8ToWide(it->original_path))) {
                 return errorResponse("app path still exists", 409);
             }
-            bool restoreFailed = false;
-            for (const auto& shortcut : it->replaced_shortcuts) {
-                auto result = restoreShortcut(shortcut);
-                if (!result.ok) restoreFailed = true;
-                restoreResults.push_back(JsonValue::Object{
-                    {"ok", result.ok},
-                    {"shortcut", result.shortcut},
-                    {"backup", result.backup},
-                    {"error", result.error}
-                });
-            }
-            if (restoreFailed) {
-                return jsonResponse(JsonValue::Object{
-                    {"ok", false},
-                    {"error", "shortcut restore failed"},
-                    {"restore_results", restoreResults},
-                    {"config", configToJson(config)}
-                }, 409);
-            }
             apps.erase(it);
             if (!rule.app_group_id.empty()) {
                 for (auto& group : config.app_groups) {
@@ -733,6 +862,9 @@ HttpResponse ApiHandlers::appCleanup(const std::string& body) {
                     groupApps.erase(std::remove_if(groupApps.begin(), groupApps.end(), [&](const auto& groupApp) {
                         return toLowerAscii(groupApp.original_path) == loweredPath;
                     }), groupApps.end());
+                    for (auto& otherRule : config.rules) {
+                        if (otherRule.app_group_id == rule.app_group_id) otherRule.blocked_apps = groupApps;
+                    }
                 }
             }
             removed = true;
@@ -747,122 +879,6 @@ HttpResponse ApiHandlers::appCleanup(const std::string& body) {
         {"restore_results", restoreResults},
         {"config", configToJson(config)}
     });
-}
-
-HttpResponse ApiHandlers::shortcutScan(const std::string& body) {
-    JsonValue parsed = requestBodyJson(body);
-    std::string appPath = parsed.get("app_path") ? parsed.get("app_path")->asString() : "";
-    if (appPath.empty()) return errorResponse("缺少应用路径");
-
-    JsonValue::Array items;
-    for (const auto& shortcut : findShortcutsForApp(appPath)) {
-        items.push_back(JsonValue::Object{
-            {"path", shortcut.path},
-            {"target_path", shortcut.target_path},
-            {"arguments", shortcut.arguments},
-            {"working_dir", shortcut.working_dir},
-            {"icon_path", shortcut.icon_path},
-            {"icon_index", shortcut.icon_index},
-            {"description", shortcut.description}
-        });
-    }
-    return jsonResponse(JsonValue::Object{{"ok", true}, {"shortcuts", items}});
-}
-
-HttpResponse ApiHandlers::shortcutReplace(const std::string& body) {
-    JsonValue parsed = requestBodyJson(body);
-    std::string appPath = parsed.get("app_path") ? parsed.get("app_path")->asString() : "";
-    std::string ruleId = parsed.get("rule_id") ? parsed.get("rule_id")->asString() : "";
-    if (appPath.empty() || ruleId.empty()) return errorResponse("缺少应用路径或规则 ID");
-
-    fs::path launcher = fs::path(executableDir()) / L"ww-launch.exe";
-    if (!fileExists(launcher.wstring())) {
-        launcher = fs::path(currentWorkingDir()) / L"ww-launch.exe";
-    }
-
-    auto config = config_.load();
-    JsonValue::Array resultItems;
-    std::vector<ShortcutReplacement> replacements;
-
-    std::vector<std::string> selectedShortcutPaths;
-    for (const auto& rule : config.rules) {
-        if (rule.id != ruleId) continue;
-        for (const auto& app : rule.blocked_apps) {
-            if (toLowerAscii(app.original_path) != toLowerAscii(appPath)) continue;
-            selectedShortcutPaths = app.shortcut_paths;
-            break;
-        }
-    }
-
-    auto appendReplacementResult = [&](const ShortcutOperationResult& result) {
-        if (result.ok) replacements.push_back({result.shortcut, result.backup});
-        if (!result.ok) {
-            LogRecord record;
-            record.timestamp = nowIsoLocal();
-            record.app = pathBaseNameUtf8(appPath);
-            record.action = "shortcut_replace_failed";
-            record.rule_id = ruleId;
-            record.shortcut = result.shortcut;
-            record.backup = result.backup;
-            record.error = result.error;
-            logger_.write(record);
-        }
-        resultItems.push_back(JsonValue::Object{
-            {"ok", result.ok},
-            {"shortcut", result.shortcut},
-            {"backup", result.backup},
-            {"error", result.error}
-        });
-    };
-
-    if (!selectedShortcutPaths.empty()) {
-        for (const auto& shortcutPath : selectedShortcutPaths) {
-            ShortcutCandidate source;
-            auto result = replaceShortcutByPath(shortcutPath, wideToUtf8(launcher.wstring()), ruleId, &source);
-            appendReplacementResult(result);
-        }
-    } else {
-        for (const auto& shortcut : findShortcutsForApp(appPath)) {
-            auto result = replaceShortcut(shortcut, wideToUtf8(launcher.wstring()), appPath, ruleId);
-            appendReplacementResult(result);
-        }
-    }
-
-    for (auto& rule : config.rules) {
-        if (rule.id != ruleId) continue;
-        for (auto& app : rule.blocked_apps) {
-            if (toLowerAscii(app.original_path) != toLowerAscii(appPath)) continue;
-            for (const auto& replacement : replacements) {
-                auto exists = std::any_of(app.replaced_shortcuts.begin(), app.replaced_shortcuts.end(), [&](const auto& item) {
-                    return toLowerAscii(item.original_lnk) == toLowerAscii(replacement.original_lnk);
-                });
-                if (!exists) app.replaced_shortcuts.push_back(replacement);
-            }
-        }
-    }
-    config_.save(config);
-
-    return jsonResponse(JsonValue::Object{{"ok", true}, {"results", resultItems}, {"config", configToJson(config)}});
-}
-
-HttpResponse ApiHandlers::restoreShortcuts(const std::string& body) {
-    auto config = config_.load();
-    JsonValue parsed = requestBodyJson(body);
-    std::string ruleId = parsed.get("rule_id") ? parsed.get("rule_id")->asString() : "";
-    JsonValue::Array resultItems;
-    auto results = ruleId.empty() ? restoreAllShortcuts(config) : restoreShortcutsForRule(config, ruleId);
-    for (const auto& result : results) {
-        resultItems.push_back(JsonValue::Object{
-            {"ok", result.ok},
-            {"shortcut", result.shortcut},
-            {"backup", result.backup},
-            {"error", result.error}
-        });
-    }
-
-    clearRestoredShortcutRecords(config, results);
-    config_.save(config);
-    return jsonResponse(JsonValue::Object{{"ok", true}, {"results", resultItems}, {"config", configToJson(config)}});
 }
 
 }

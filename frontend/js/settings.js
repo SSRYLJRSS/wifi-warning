@@ -3,7 +3,7 @@ let editingRuleId = null;
 let editingGroupId = null;
 let editingGroupApps = [];
 let networkOptions = [];
-const shortcutPreviews = new Map();
+let lastInterceptStatus = null;
 const appPathStatus = new Map();
 
 const $ = (id) => document.getElementById(id);
@@ -34,14 +34,42 @@ function cloneApp(app) {
   return {
     name: app.name || app.path || app.original_path || "",
     original_path: app.original_path || app.path || "",
-    icon_path: app.icon_path || app.original_path || app.path || "",
-    shortcut_paths: [...(app.shortcut_paths || [])],
-    replaced_shortcuts: (app.replaced_shortcuts || []).map((shortcut) => ({ ...shortcut }))
+    icon_path: app.icon_path || app.original_path || app.path || ""
   };
 }
 
 function appsSamePath(a, b) {
   return String(a || "").toLowerCase() === String(b || "").toLowerCase();
+}
+
+function appDisplayName(path) {
+  const fileName = String(path || "").split(/[\\/]/).pop() || "";
+  return fileName.replace(/\.exe$/i, "");
+}
+
+function appFromBrowse(app) {
+  const path = app.path || app.original_path || "";
+  return {
+    name: app.name || appDisplayName(path),
+    original_path: path,
+    icon_path: app.icon_path || path
+  };
+}
+
+function mergeApps(existingApps, newApps) {
+  const merged = (existingApps || []).map(cloneApp);
+  for (const item of newApps || []) {
+    const path = item.path || item.original_path || "";
+    if (!path) continue;
+    const existing = merged.find((app) => appsSamePath(app.original_path, path));
+    if (existing) {
+      existing.name ||= item.name || appDisplayName(path);
+      existing.icon_path ||= item.icon_path || path;
+    } else {
+      merged.push(appFromBrowse(item));
+    }
+  }
+  return merged;
 }
 
 function networkKey(type, id) {
@@ -67,7 +95,7 @@ function setTab(tab) {
     button.classList.toggle("active", button.dataset.tab === tab);
   });
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.remove("active"));
-  $(`${tab}Panel`).classList.add("active");
+  $(tab + "Panel").classList.add("active");
   if (tab === "stats") loadStats();
 }
 
@@ -75,7 +103,6 @@ function normalizeConfig() {
   appConfig.settings ||= {};
   appConfig.rules ||= [];
   appConfig.app_groups ||= [];
-  // v1.9: preserve backend version instead of hardcoding
   appConfig.settings.language ||= "zh-CN";
 
   const knownGroups = new Set(appConfig.app_groups.map((group) => group.id));
@@ -89,11 +116,7 @@ function normalizeConfig() {
     appConfig.app_groups.push({
       id: generatedId,
       name: generatedName,
-      apps: rule.blocked_apps.map((app) => {
-        const copied = cloneApp(app);
-        copied.replaced_shortcuts = [];
-        return copied;
-      })
+      apps: rule.blocked_apps.map((app) => cloneApp(app))
     });
     rule.app_group_id = generatedId;
     knownGroups.add(generatedId);
@@ -116,55 +139,6 @@ function groupName(groupId) {
   return groupById(groupId)?.name || t("selectGroup");
 }
 
-function shortcutDisplayName(path) {
-  const fileName = String(path || "").split(/[\\/]/).pop() || "";
-  return fileName.replace(/\.lnk$/i, "");
-}
-
-function appFromShortcut(shortcut) {
-  const target = shortcut.target_path || "";
-  const name = shortcutDisplayName(shortcut.path) || (target.split(/[\\/]/).pop() || target).replace(/\.exe$/i, "");
-  return {
-    name,
-    original_path: target,
-    icon_path: shortcut.icon_path || target,
-    shortcut_paths: shortcut.path ? [shortcut.path] : [],
-    replaced_shortcuts: []
-  };
-}
-
-function mergeShortcutApps(existingApps, shortcuts) {
-  let apps = (existingApps || []).map(cloneApp);
-  for (const shortcut of shortcuts || []) {
-    const shortcutPath = shortcut.path || "";
-    const target = shortcut.target_path || "";
-    if (!shortcutPath || !target) continue;
-    const existing = apps.find((app) => appsSamePath(app.original_path, target));
-    if (existing) {
-      existing.name ||= shortcutDisplayName(shortcutPath);
-      existing.icon_path ||= shortcut.icon_path || target;
-      existing.shortcut_paths ||= [];
-      if (!existing.shortcut_paths.some((path) => appsSamePath(path, shortcutPath))) {
-        existing.shortcut_paths.push(shortcutPath);
-      }
-    } else {
-      apps.push(appFromShortcut(shortcut));
-    }
-  }
-  return apps;
-}
-
-function mergeAppsWithExistingReplacements(ruleId, apps) {
-  const existingRule = appConfig.rules.find((item) => item.id === ruleId);
-  if (!existingRule) return apps.map(cloneApp);
-  return apps.map((source) => {
-    const app = cloneApp(source);
-    const previous = (existingRule.blocked_apps || []).find((item) => appsSamePath(item.original_path, app.original_path));
-    app.replaced_shortcuts = previous?.replaced_shortcuts || [];
-    return app;
-  });
-}
-
 function renderGroupOptions() {
   const select = $("ruleGroupSelect");
   if (!select) return;
@@ -173,28 +147,120 @@ function renderGroupOptions() {
     .join("");
 }
 
-function restoreCounts(result) {
-  const items = result?.results || [];
-  return {
-    ok: items.filter((item) => item.ok).length,
-    failed: items.filter((item) => !item.ok).length
-  };
+/* ---------- intercept status (IFEO) ---------- */
+function interceptApplyMessage(result) {
+  if (!result) return t("interceptApplyFailed", { error: "unknown" });
+  if (result.ok === false || result.error) {
+    const err = String(result.error || "");
+    if (!err || /cancel|取消|elevat|admin|uac|权限/i.test(err)) return t("interceptCancelled");
+    return t("interceptApplyFailed", { error: err });
+  }
+  const applied = result.applied ?? 0;
+  const already = result.already ?? 0;
+  return t("interceptApplyOk", { count: applied + already });
 }
 
-function restoreMessage(counts) {
-  return counts.failed ? t("restoredMixed", counts) : t("restoredOk", counts);
+function renderInterceptStatus(status) {
+  lastInterceptStatus = status || null;
+  const active = status?.active === true;
+  const desired = status?.desired ?? (status?.managed_exes ? status.managed_exes.length : 0);
+  const missing = status?.missing ?? (status?.missing_exes ? status.missing_exes.length : 0);
+  const badge = $("interceptBadge");
+  const activeEl = $("interceptActive");
+  const desiredEl = $("interceptDesired");
+  const missingEl = $("interceptMissing");
+  const listEl = $("interceptMissingList");
+  const needsRepair = active && missing > 0;
+  const stateLabel = !active ? t("interceptActiveOff") : (needsRepair ? t("interceptNeedsRepair") : t("interceptActiveOn"));
+  if (badge) {
+    badge.textContent = stateLabel;
+    badge.className = `status-badge ${active && !needsRepair ? "ok" : "warn"}`;
+  }
+  if (activeEl) activeEl.textContent = stateLabel;
+  if (desiredEl) desiredEl.textContent = String(desired);
+  if (missingEl) missingEl.textContent = String(missing);
+  if (listEl) {
+    const exes = status?.missing_exes || [];
+    listEl.innerHTML = exes.length
+      ? `<p class="muted">${escapeHtml(t("interceptMissingListTitle"))}</p>` + exes
+          .map((exe) => `<span class="missing-exe-chip">${escapeHtml(exe)}</span>`).join("")
+      : "";
+  }
 }
 
+async function loadInterceptStatus() {
+  try {
+    const status = await Api.Intercept.status();
+    renderInterceptStatus(status);
+    return status;
+  } catch (error) {
+    const badge = $("interceptBadge");
+    if (badge) {
+      badge.textContent = t("interceptUnknown");
+      badge.className = "status-badge warn";
+    }
+    return null;
+  }
+}
+
+async function maybeApplyIntercept() {
+  if (!appConfig?.settings?.protection_enabled) {
+    await loadInterceptStatus();
+    return null;
+  }
+  try {
+    const result = await Api.Intercept.apply();
+    if (result?.status) renderInterceptStatus(result.status);
+    else await loadInterceptStatus();
+    toast(interceptApplyMessage(result));
+    return result;
+  } catch (error) {
+    toast(interceptApplyMessage({ ok: false, error: error.message }));
+    return null;
+  }
+}
+
+async function applyInterceptFromUi() {
+  const button = $("applyInterceptButton");
+  if (button) button.disabled = true;
+  try {
+    const result = await Api.Intercept.apply();
+    if (result?.status) renderInterceptStatus(result.status);
+    else await loadInterceptStatus();
+    toast(interceptApplyMessage(result));
+  } catch (error) {
+    toast(interceptApplyMessage({ ok: false, error: error.message }));
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function restoreInterceptFromUi() {
+  if (!confirm(t("interceptRestoreConfirm"))) return;
+  const button = $("restoreInterceptButton");
+  if (button) button.disabled = true;
+  try {
+    const result = await Api.Intercept.restore();
+    if (result?.status) renderInterceptStatus(result.status);
+    else await loadInterceptStatus();
+    toast(t("interceptRestoreOk", { count: result?.removed ?? 0 }));
+  } catch (error) {
+    toast(t("interceptRestoreFailed", { error: error.message }));
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+/* ---------- groups ---------- */
 function renderGroupAppRows(group) {
   const apps = editingGroupId === group?.id ? editingGroupApps : (group?.apps || []);
   if (!apps.length) return `<div class="empty-line">${escapeHtml(t("noGroupApps"))}</div>`;
   return apps.map((app) => `
     <div class="software-row">
-      <div class="software-icon">LNK</div>
+      <div class="software-icon">EXE</div>
       <div>
         <strong>${escapeHtml(app.name || app.original_path)}</strong>
         <span>${escapeHtml(app.original_path)}</span>
-        ${(app.shortcut_paths || []).map((path) => `<small>${escapeHtml(path)}</small>`).join("")}
       </div>
       ${editingGroupId === group.id ? `<button class="icon-button danger-text" type="button" data-remove-app="${escapeHtml(app.original_path)}" title="${escapeHtml(t("remove"))}">×</button>` : ""}
     </div>
@@ -228,7 +294,7 @@ function renderGroups() {
       card.querySelectorAll("[data-remove-app]").forEach((button) => {
         button.addEventListener("click", () => {
           editingGroupApps = editingGroupApps.filter((app) => !appsSamePath(app.original_path, button.dataset.removeApp));
-          renderEditingShortcutList();
+          renderEditingAppList();
           renderGroups();
         });
       });
@@ -245,7 +311,7 @@ function resetGroupForm() {
   $("groupName").value = "";
   $("groupFormTitle").textContent = t("newGroup");
   $("groupForm").classList.add("hidden");
-  renderEditingShortcutList();
+  renderEditingAppList();
   renderGroups();
 }
 
@@ -256,7 +322,7 @@ function startGroupEdit(groupId = "") {
   $("groupFormTitle").textContent = group ? t("editGroup") : t("newGroup");
   $("groupName").value = group?.name || "";
   $("groupForm").classList.remove("hidden");
-  renderEditingShortcutList();
+  renderEditingAppList();
   $("groupName").focus();
   renderGroups();
 }
@@ -268,43 +334,26 @@ async function deleteGroup(groupId) {
   const detail = usedRules.length ? `\n${t("deleteGroupUsed", { count: usedRules.length })}` : "";
   if (!confirm(`${t("deleteGroupConfirm", { name: group.name })}${detail}`)) return;
 
-  for (const rule of usedRules) {
-    if ((rule.blocked_apps || []).some((app) => (app.replaced_shortcuts || []).length)) {
-      const restored = await Api.restoreShortcuts(rule.id);
-      appConfig = restored.config || appConfig;
-      normalizeConfig();
-      const counts = restoreCounts(restored);
-      if (counts.failed) {
-        applySettings();
-        renderGroups();
-        renderRules();
-        await loadAppStatuses();
-        toast(t("restoredMixed", counts));
-        return;
-      }
-    }
-  }
-
   appConfig.rules = appConfig.rules.filter((rule) => rule.app_group_id !== groupId);
   appConfig.app_groups = appConfig.app_groups.filter((item) => item.id !== groupId);
   if (editingGroupId === groupId) resetGroupForm();
   await saveConfig(t("groupDeleted"));
+  await maybeApplyIntercept();
 }
 
-function renderEditingShortcutList() {
-  const list = $("groupShortcutList");
+function renderEditingAppList() {
+  const list = $("groupAppList");
   if (!list) return;
   if (!editingGroupApps.length) {
-    list.innerHTML = `<div class="empty-line">${escapeHtml(t("noEditingShortcuts"))}</div>`;
+    list.innerHTML = `<div class="empty-line">${escapeHtml(t("noEditingApps"))}</div>`;
     return;
   }
   list.innerHTML = editingGroupApps.map((app) => `
     <div class="software-row">
-      <div class="software-icon">LNK</div>
+      <div class="software-icon">EXE</div>
       <div>
         <strong>${escapeHtml(app.name || app.original_path)}</strong>
         <span>${escapeHtml(app.original_path)}</span>
-        ${(app.shortcut_paths || []).map((path) => `<small>${escapeHtml(path)}</small>`).join("")}
       </div>
       <button class="icon-button danger-text" type="button" data-remove-editing-app="${escapeHtml(app.original_path)}" title="${escapeHtml(t("remove"))}">×</button>
     </div>
@@ -312,7 +361,7 @@ function renderEditingShortcutList() {
   list.querySelectorAll("[data-remove-editing-app]").forEach((button) => {
     button.addEventListener("click", () => {
       editingGroupApps = editingGroupApps.filter((app) => !appsSamePath(app.original_path, button.dataset.removeEditingApp));
-      renderEditingShortcutList();
+      renderEditingAppList();
       renderGroups();
     });
   });
@@ -336,31 +385,27 @@ async function saveGroupFromForm(event) {
     name,
     apps
   };
-  const usedRuleIds = appConfig.rules
-    .filter((rule) => rule.app_group_id === group.id)
-    .map((rule) => rule.id);
   const index = appConfig.app_groups.findIndex((item) => item.id === group.id);
   if (index >= 0) appConfig.app_groups[index] = group;
   else appConfig.app_groups.push(group);
 
   for (const rule of appConfig.rules) {
     if (rule.app_group_id !== group.id) continue;
-    rule.blocked_apps = mergeAppsWithExistingReplacements(rule.id, group.apps);
+    rule.blocked_apps = group.apps.map(cloneApp);
   }
 
   await saveConfig(t("groupSaved"));
   resetGroupForm();
-  for (const ruleId of usedRuleIds) {
-    await replaceRuleShortcuts(ruleId);
-  }
+  await maybeApplyIntercept();
 }
 
-function appendGroupShortcuts(shortcuts) {
-  editingGroupApps = mergeShortcutApps(editingGroupApps, shortcuts);
-  renderEditingShortcutList();
+function appendGroupApps(apps) {
+  editingGroupApps = mergeApps(editingGroupApps, apps);
+  renderEditingAppList();
   renderGroups();
 }
 
+/* ---------- rules ---------- */
 function renderRuleApps(rule) {
   const apps = rule.blocked_apps || [];
   if (!apps.length) return `<div class="app-status-list muted">${escapeHtml(t("none"))}</div>`;
@@ -382,26 +427,6 @@ function renderRuleApps(rule) {
   return `<div class="app-status-list">${rows}</div>`;
 }
 
-function renderShortcutPreview(ruleId) {
-  const preview = shortcutPreviews.get(ruleId);
-  if (!preview) return "";
-  if (preview.loading) return `<div class="shortcut-preview muted">${escapeHtml(t("scanning"))}</div>`;
-
-  const rows = (preview.items || []).map((item) => `
-    <div class="shortcut-row ${item.ok === false ? "failed" : ""}">
-      <strong>${escapeHtml(item.app || item.path || "")}</strong>
-      <span>${escapeHtml(item.message || item.path || "")}</span>
-    </div>
-  `).join("");
-
-  return `
-    <div class="shortcut-preview" data-preview-for="${escapeHtml(ruleId)}">
-      <div class="preview-title">${escapeHtml(preview.message || t("scanDone", { count: preview.count || 0 }))}</div>
-      ${rows || `<div class="shortcut-row muted">${escapeHtml(t("noShortcutFound"))}</div>`}
-    </div>
-  `;
-}
-
 function renderRules() {
   const list = $("rulesList");
   list.innerHTML = "";
@@ -415,7 +440,6 @@ function renderRules() {
     normalizeNetworkRule(rule);
     const card = document.createElement("article");
     card.className = "rule-card";
-    const shortcutCount = (rule.blocked_apps || []).reduce((sum, app) => sum + (app.replaced_shortcuts || []).length, 0);
     card.innerHTML = `
       <header>
         <div>
@@ -423,23 +447,17 @@ function renderRules() {
           <div class="pill-row">
             <span class="pill">${escapeHtml(t("softwareGroup"))}: ${escapeHtml(groupName(rule.app_group_id))}</span>
             <span class="pill">${escapeHtml(t("appCount", { count: (rule.blocked_apps || []).length }))}</span>
-            <span class="pill">${escapeHtml(t("replacedShortcuts", { count: shortcutCount }))}</span>
           </div>
         </div>
       </header>
       <p class="muted">${escapeHtml(t("ruleMuted"))}</p>
       ${renderRuleApps(rule)}
-      ${renderShortcutPreview(rule.id)}
       <div class="rule-actions">
         <button class="ghost-button" data-action="edit">${escapeHtml(t("edit"))}</button>
-        <button class="ghost-button" data-action="scan">${escapeHtml(t("scanShortcuts"))}</button>
-        <button class="ghost-button" data-action="replace">${escapeHtml(t("replaceAgain"))}</button>
         <button class="ghost-button danger-text" data-action="delete">${escapeHtml(t("delete"))}</button>
       </div>
     `;
     card.querySelector('[data-action="edit"]').addEventListener("click", () => startRuleEdit(rule.id));
-    card.querySelector('[data-action="scan"]').addEventListener("click", () => scanRuleShortcuts(rule.id));
-    card.querySelector('[data-action="replace"]').addEventListener("click", () => replaceRuleShortcuts(rule.id));
     card.querySelector('[data-action="delete"]').addEventListener("click", () => deleteRule(rule.id));
     card.querySelectorAll('[data-action="cleanup-app"]').forEach((button) => {
       button.addEventListener("click", () => cleanupMissingApp(rule.id, button.dataset.appPath));
@@ -525,7 +543,7 @@ async function saveRuleFromForm(event) {
     network_id: network.id,
     network_name: network.name || network.id,
     app_group_id: group.id,
-    blocked_apps: mergeAppsWithExistingReplacements(ruleId, group.apps),
+    blocked_apps: group.apps.map(cloneApp),
     safe_wifi_ssid: existingRule?.safe_wifi_ssid || "",
     safe_wifi_password: existingRule?.safe_wifi_password || "",
     description: `${displayNetwork(network)} -> ${group.name}`
@@ -538,78 +556,18 @@ async function saveRuleFromForm(event) {
   appConfig.settings.protection_enabled = true;
   await saveConfig(t("ruleSaved"));
   resetRuleForm();
-  await replaceRuleShortcuts(rule.id);
-}
-
-async function replaceRuleShortcuts(ruleId) {
-  const rule = appConfig.rules.find((item) => item.id === ruleId);
-  if (!rule) return;
-  let total = 0;
-  const resultItems = [];
-  for (const app of rule.blocked_apps || []) {
-    const result = await Api.replaceShortcuts(app.original_path, rule.id);
-    appConfig = result.config || appConfig;
-    normalizeConfig();
-    for (const item of result.results || []) {
-      if (item.ok) total += 1;
-      resultItems.push({
-        app: app.name || app.original_path,
-        ok: item.ok,
-        path: item.shortcut,
-        message: item.ok ? item.shortcut : (item.error || item.shortcut || "Failed")
-      });
-    }
+  if (appConfig.settings.protection_enabled) {
+    await maybeApplyIntercept();
   }
-  shortcutPreviews.set(ruleId, {
-    count: total,
-    message: t("replaceDone", { count: total }),
-    items: resultItems
-  });
-  applySettings();
-  renderGroups();
-  renderRules();
-  loadAppStatuses().catch(() => {});
-  toast(t("replaceDone", { count: total }));
 }
 
 async function deleteRule(ruleId) {
   const rule = appConfig.rules.find((item) => item.id === ruleId);
   if (!rule) return;
   if (!confirm(t("deleteRuleConfirm", { name: displayNetwork(rule) }))) return;
-  if ((rule.blocked_apps || []).some((app) => (app.replaced_shortcuts || []).length)) {
-    const restored = await Api.restoreShortcuts(ruleId);
-    appConfig = restored.config || appConfig;
-    normalizeConfig();
-    const counts = restoreCounts(restored);
-    if (counts.failed) {
-      applySettings();
-      renderGroups();
-      renderRules();
-      await loadAppStatuses();
-      toast(t("restoredMixed", counts));
-      return;
-    }
-  }
   appConfig.rules = appConfig.rules.filter((item) => item.id !== ruleId);
-  shortcutPreviews.delete(ruleId);
   await saveConfig(t("ruleDeleted"));
-}
-
-async function restoreAllShortcutsFromUi() {
-  if (!confirm(t("shortcutRestoreConfirm"))) return;
-  try {
-    const result = await Api.restoreShortcuts();
-    appConfig = result.config || appConfig;
-    normalizeConfig();
-    shortcutPreviews.clear();
-    applySettings();
-    renderGroups();
-    renderRules();
-    await loadAppStatuses();
-    toast(restoreMessage(restoreCounts(result)));
-  } catch (error) {
-    toast(error.message);
-  }
+  await maybeApplyIntercept();
 }
 
 async function loadAppStatuses() {
@@ -638,44 +596,6 @@ async function cleanupMissingApp(ruleId, appPath) {
   } catch (error) {
     toast(error.message);
   }
-}
-
-async function scanRuleShortcuts(ruleId) {
-  const rule = appConfig.rules.find((item) => item.id === ruleId);
-  if (!rule) return;
-  shortcutPreviews.set(ruleId, { loading: true });
-  renderRules();
-
-  const items = [];
-  for (const app of rule.blocked_apps || []) {
-    const result = await Api.scanShortcuts(app.original_path);
-    const shortcuts = result.shortcuts || [];
-    if (!shortcuts.length) {
-      items.push({
-        app: app.name || app.original_path,
-        message: t("noShortcutFound"),
-        ok: true
-      });
-      continue;
-    }
-    for (const shortcut of shortcuts) {
-      items.push({
-        app: app.name || app.original_path,
-        path: shortcut.path,
-        message: shortcut.path,
-        ok: true
-      });
-    }
-  }
-
-  const count = items.filter((item) => item.path).length;
-  shortcutPreviews.set(ruleId, {
-    count,
-    message: t("scanDone", { count }),
-    items
-  });
-  renderRules();
-  toast(t("scanDone", { count }));
 }
 
 async function saveConfig(message = t("toastSaved")) {
@@ -708,9 +628,6 @@ function actionLabel(row) {
   const labels = {
     blocked: t("actionBlocked"),
     bypassed: t("actionBypassed"),
-    shortcut_restored: t("actionShortcutRestored"),
-    shortcut_restore_failed: t("actionShortcutRestoreFailed"),
-    shortcut_replace_failed: t("actionShortcutReplaceFailed"),
     config_repaired: t("actionConfigRepaired"),
     protection_disabled_no_adapter: t("actionNoAdapter"),
     switched_to: t("actionSwitched"),
@@ -786,7 +703,7 @@ async function loadStats() {
     <tr>
       <td>${escapeHtml(row.timestamp || "")}</td>
       <td>${escapeHtml(row.ssid || row.target_ssid || "")}</td>
-      <td>${escapeHtml(row.app || row.shortcut || "")}</td>
+      <td>${escapeHtml(row.app || "")}</td>
       <td>${escapeHtml(actionLabel(row))}</td>
     </tr>
   `).join("");
@@ -798,10 +715,12 @@ function applyLanguage(lang) {
   $("saveRuleButton").textContent = editingRuleId ? t("saveEditedRule") : t("saveRule");
   $("groupFormTitle").textContent = editingGroupId ? t("editGroup") : t("newGroup");
   renderGroupOptions();
-  renderEditingShortcutList();
+  renderEditingAppList();
   renderGroups();
   renderRules();
   renderRuleSummary();
+  if (lastInterceptStatus) renderInterceptStatus(lastInterceptStatus);
+  else loadInterceptStatus().catch(() => {});
   loadNetworkOptions().catch(() => {});
   if ($("statsPanel").classList.contains("active")) loadStats().catch(() => {});
 }
@@ -829,6 +748,7 @@ async function init() {
   renderRules();
   loadAppStatuses().catch(() => {});
   loadNetworkOptions().catch(() => {});
+  loadInterceptStatus().catch(() => {});
 
   if (location.hash === "#stats") setTab("stats");
 
@@ -848,36 +768,48 @@ async function init() {
   $("newGroupButton").addEventListener("click", () => startGroupEdit(""));
   $("cancelGroupEdit").addEventListener("click", resetGroupForm);
   $("groupForm").addEventListener("submit", saveGroupFromForm);
-  $("browseGroupShortcuts").addEventListener("click", async () => {
+  $("browseGroupApps").addEventListener("click", async () => {
     try {
-      const result = await Api.browseShortcuts();
+      const result = await Api.browseApps();
       if (result.cancelled) return;
-      const shortcuts = (result.shortcuts || []).filter((shortcut) => shortcut.target_path);
-      appendGroupShortcuts(shortcuts);
-      toast(t("selectedShortcuts", { count: shortcuts.length }));
+      const apps = (result.apps || []).filter((app) => app.path);
+      appendGroupApps(apps);
+      toast(t("selectedApps", { count: apps.length }));
     } catch (error) {
       toast(error.message);
     }
   });
 
   $("addRuleButton").addEventListener("click", resetRuleForm);
-  $("restoreAllShortcutsButton").addEventListener("click", restoreAllShortcutsFromUi);
   $("ruleNetworkSelect").addEventListener("change", renderRuleSummary);
   $("manualNetwork").addEventListener("input", renderRuleSummary);
   $("ruleGroupSelect").addEventListener("change", renderRuleSummary);
   $("ruleForm").addEventListener("submit", saveRuleFromForm);
 
+  $("applyInterceptButton").addEventListener("click", applyInterceptFromUi);
+  $("restoreInterceptButton").addEventListener("click", restoreInterceptFromUi);
+  $("refreshInterceptButton").addEventListener("click", async () => {
+    await loadInterceptStatus();
+    toast(t("interceptRefreshed"));
+  });
+
   $("protectionToggle").addEventListener("change", async (event) => {
-    let message = event.target.checked ? t("protectionOn") : t("protectionOff");
-    appConfig.settings.protection_enabled = event.target.checked;
-    if (!event.target.checked) {
-      const restored = await Api.restoreShortcuts();
-      appConfig = restored.config || appConfig;
-      normalizeConfig();
-      appConfig.settings.protection_enabled = false;
-      message = restoreMessage(restoreCounts(restored));
+    const enabled = event.target.checked;
+    appConfig.settings.protection_enabled = enabled;
+    if (enabled) {
+      await saveConfig(t("protectionOn"));
+      await maybeApplyIntercept();
+    } else {
+      await saveConfig(t("protectionOff"));
+      try {
+        const result = await Api.Intercept.restore();
+        if (result?.status) renderInterceptStatus(result.status);
+        else await loadInterceptStatus();
+        toast(t("protectionOff"));
+      } catch (error) {
+        toast(t("interceptRestoreFailed", { error: error.message }));
+      }
     }
-    await saveConfig(message);
   });
   $("autoStartToggle").addEventListener("change", async (event) => {
     appConfig.settings.auto_start = event.target.checked;

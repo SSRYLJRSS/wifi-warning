@@ -2,7 +2,7 @@
 #include "core/config_manager.h"
 #include "core/logger.h"
 #include "core/network_manager.h"
-#include "core/shortcut_manager.h"
+#include "core/ifeo_manager.h"
 #include "core/util.h"
 #include "core/wifi_detector.h"
 #include "ui/browser_launcher.h"
@@ -62,32 +62,47 @@ static void consoleLine(const std::wstring& text) {
     WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), line.c_str(), static_cast<DWORD>(line.size()), &written, nullptr);
 }
 
-static int restoreAllAndSave(ww::ConfigManager& configManager, ww::Logger& logger, bool uninstallMode = false, bool syncAutoStart = true) {
+static int restoreIfeoAndSave(ww::ConfigManager& configManager, ww::Logger& logger, bool uninstallMode = false, bool syncAutoStart = true) {
     auto config = configManager.load();
-    auto results = ww::restoreAllShortcuts(config);
-    int failures = 0;
-    for (const auto& result : results) {
-        ww::LogRecord record;
-        record.timestamp = ww::nowIsoLocal();
-        record.action = result.ok ? "shortcut_restored" : "shortcut_restore_failed";
-        record.shortcut = result.shortcut;
-        record.backup = result.backup;
-        record.error = result.error;
-        logger.write(record);
-        if (!result.ok) ++failures;
-    }
-    ww::clearRestoredShortcutRecords(config, results);
-    config.settings.protection_enabled = false;
-    if (uninstallMode) {
-        config.settings.auto_start = false;
-        if (syncAutoStart) {
-            std::string ignored;
-            ww::setAutoStart(false, ww::executablePath(), &ignored);
+
+    int code = -1;
+    std::wstring admin = std::wstring(ww::executableDir()) + L"\\ww-admin.exe";
+    if (ww::fileExists(admin)) {
+        SHELLEXECUTEINFOW sei{};
+        sei.cbSize = sizeof(sei);
+        sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+        sei.lpVerb = L"runas";
+        sei.lpFile = admin.c_str();
+        sei.lpParameters = L"--ifeo-restore";
+        sei.nShow = SW_HIDE;
+        if (ShellExecuteExW(&sei) && sei.hProcess) {
+            WaitForSingleObject(sei.hProcess, 120000);
+            DWORD exitCode = 0;
+            GetExitCodeProcess(sei.hProcess, &exitCode);
+            CloseHandle(sei.hProcess);
+            code = static_cast<int>(exitCode);
         }
     }
-    configManager.save(config);
-    consoleLine(L"已尝试还原所有快捷方式，失败数: " + std::to_wstring(failures));
-    return failures == 0 ? 0 : 2;
+    ww::LogRecord record;
+    record.timestamp = ww::nowIsoLocal();
+    record.action = code == 0 ? "ifeo_restored" : "ifeo_restore_failed";
+    if (code != 0) record.error = "退出码 " + std::to_string(code);
+    logger.write(record);
+    if (code == 0) {
+        config.settings.protection_enabled = false;
+        if (uninstallMode) {
+            config.settings.auto_start = false;
+            if (syncAutoStart) {
+                std::string ignored;
+                ww::setAutoStart(false, ww::executablePath(), &ignored);
+            }
+        }
+        configManager.save(config);
+        consoleLine(L"已关闭防护并还原 IFEO 拦截。");
+    } else {
+        consoleLine(L"还原 IFEO 拦截失败或已取消（退出码: " + std::to_wstring(code) + L"），防护保持开启。");
+    }
+    return code == 0 ? 0 : 2;
 }
 
 static void logConfigRepair(ww::Logger& logger, const ww::ConfigLoadStatus& status) {
@@ -109,7 +124,7 @@ static void addStartupNotices(ww::TrayIcon& tray, const ww::ConfigLoadStatus& co
     if (disabledForNoAdapter) {
         tray.addStartupNotice(
             L"\u672a\u68c0\u6d4b\u5230\u7f51\u7edc\u9002\u914d\u5668",
-            L"\u5df2\u5173\u95ed\u9632\u62a4\u5e76\u5c1d\u8bd5\u8fd8\u539f\u5feb\u6377\u65b9\u5f0f\u3002");
+            L"\u5df2\u5173\u95ed\u9632\u62a4\u3002");
     }
 }
 
@@ -125,12 +140,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     logger.rotate();
     logConfigRepair(logger, configLoadStatus);
 
-    if (ww::reconcileShortcutRecords(config) > 0) {
-        configManager.save(config);
-    }
-
     if (hasArg(args, L"--restore-shortcuts") || hasArg(args, L"--uninstall-restore")) {
-        return restoreAllAndSave(configManager, logger, hasArg(args, L"--uninstall-restore"), !hasArg(args, L"--no-autostart-sync"));
+        return restoreIfeoAndSave(configManager, logger, hasArg(args, L"--uninstall-restore"), !hasArg(args, L"--no-autostart-sync"));
     }
 
     if (hasArg(args, L"--status")) {
@@ -142,9 +153,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 
     fs::path launcher = fs::path(ww::executableDir()) / L"ww-launch.exe";
     if (!ww::fileExists(launcher.wstring())) {
-        restoreAllAndSave(configManager, logger);
+        MessageBoxW(nullptr, L"启动器 ww-launch.exe 缺失，拦截无法生效。请重新安装。", L"WiFi 提醒", MB_OK | MB_ICONWARNING);
+        restoreIfeoAndSave(configManager, logger);
         config = configManager.load();
-        MessageBoxW(nullptr, L"启动器缺失，已尝试还原所有被替换的快捷方式。", L"WiFi 提醒", MB_OK | MB_ICONWARNING);
     }
 
     std::string ignored;
@@ -152,18 +163,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         ww::setAutoStart(config.settings.auto_start, ww::executablePath(), &ignored);
     }
 
-    bool disabledForNoAdapter = false;
-    auto startupNetwork = ww::getCurrentNetwork();
-    if (ww::isNoNetworkAdapter(startupNetwork) && config.settings.protection_enabled) {
-        restoreAllAndSave(configManager, logger);
-        config = configManager.load();
-        ww::LogRecord record;
-        record.timestamp = ww::nowIsoLocal();
-        record.action = "protection_disabled_no_adapter";
-        record.error = startupNetwork.error;
-        logger.write(record);
-        disabledForNoAdapter = true;
-    }
+    bool disabledForNoAdapter = false;  // 不再因无 WiFi 适配器自动关闭防护（以太网机器会漏拦）
 
     ww::HttpServer server(config.settings.http_port, configManager, logger);
     if (!server.start()) {
@@ -196,7 +196,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     }
 
     if (!hasArg(args, L"--minimized")) {
-        ww::openUrlInBrowser("http://localhost:" + std::to_string(config.settings.http_port) + "/settings");
+        ww::openUrlInBrowser("http://localhost:" + std::to_string(config.settings.http_port) + "/");
     }
 
     ww::TrayIcon tray(configManager, logger, config.settings.http_port);

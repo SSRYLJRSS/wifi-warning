@@ -59,6 +59,8 @@ a {
 }
 
 .sidebar {
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
   padding: 24px 16px;
   background: #111614;
@@ -152,8 +154,9 @@ a {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 22px;
-  padding: 12px 4px;
+  margin-top: auto;
+  padding-top: 18px;
+  padding-bottom: 4px;
   color: #9facaa;
   font-size: 13px;
 }
@@ -383,36 +386,6 @@ textarea {
   font-weight: 700;
 }
 
-.shortcut-preview {
-  display: grid;
-  gap: 8px;
-  margin-top: 14px;
-  padding: 12px;
-  border-radius: var(--radius);
-  background: var(--surface-strong);
-}
-
-.preview-title {
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.shortcut-row {
-  display: grid;
-  gap: 3px;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-}
-
-.shortcut-row span {
-  color: var(--muted);
-}
-
-.shortcut-row.failed span {
-  color: var(--danger);
-}
-
 .settings-card {
   padding: 22px;
 }
@@ -616,7 +589,7 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-.selected-shortcut-list {
+.selected-app-list {
   display: grid;
   gap: 8px;
   min-height: 72px;
@@ -792,3 +765,33 @@ dd {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* ---------- IFEO interception status ---------- */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: var(--bg);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.status-badge.ok { border-color: rgba(52, 211, 153, 0.5); color: #34d399; }
+.status-badge.warn { border-color: rgba(251, 191, 36, 0.5); color: #fbbf24; }
+.intercept-card .subhead-row { align-items: flex-start; }
+.intercept-metrics { margin: 14px 0 10px; }
+.missing-exe-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.missing-exe-list p { flex-basis: 100%; margin: 0; }
+.missing-exe-chip {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: #fbbf24;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+

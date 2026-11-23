@@ -1,0 +1,4 @@
+const http=require('http'),fs=require('fs'),path=require('path');
+const root=path.resolve(__dirname,'../frontend');
+const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'application/javascript; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.ico':'image/x-icon'};
+http.createServer(function(req,res){ var p=decodeURIComponent((req.url||'/').split('?')[0]); if(p==='/')p='/index.html'; if(p.indexOf('/api/')===0){res.writeHead(404);res.end('no');return;} var fp=path.join(root,p); fs.readFile(fp,function(e,buf){ if(e){res.writeHead(404);res.end('nf');return;} res.writeHead(200,{'Content-Type':types[path.extname(fp)]||'application/octet-stream'});res.end(buf);}); }).listen(18999,'127.0.0.1',function(){console.log('preview on http://127.0.0.1:18999');});

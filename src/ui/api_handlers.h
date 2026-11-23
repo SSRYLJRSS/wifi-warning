@@ -46,14 +46,15 @@ private:
     HttpResponse stats();
     HttpResponse bypass(const std::string& body);
     HttpResponse appBrowse();
-    HttpResponse shortcutBrowse();
-    HttpResponse shortcutRead(const std::string& body);
     HttpResponse appIcon(const HttpRequest& request);
     HttpResponse appStatus();
     HttpResponse appCleanup(const std::string& body);
-    HttpResponse shortcutScan(const std::string& body);
-    HttpResponse shortcutReplace(const std::string& body);
-    HttpResponse restoreShortcuts(const std::string& body);
+    HttpResponse networkSummary();
+    HttpResponse adapterToggle(const std::string& path, const std::string& body);
+    HttpResponse restoreLast();
+    HttpResponse interceptStatus();
+    HttpResponse interceptApply(const std::string& body);
+    HttpResponse interceptRestore(const std::string& body);
 };
 
 JsonValue requestBodyJson(const std::string& body);

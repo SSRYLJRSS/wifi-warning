@@ -76,20 +76,6 @@ const Api = {
     });
   },
 
-  browseShortcuts() {
-    return this.request("/api/shortcuts/browse", {
-      method: "POST",
-      body: "{}"
-    });
-  },
-
-  readShortcut(shortcutPath) {
-    return this.request("/api/shortcuts/read", {
-      method: "POST",
-      body: JSON.stringify({ shortcut_path: shortcutPath })
-    });
-  },
-
   appIconUrl(appPath) {
     return `/api/apps/icon?path=${encodeURIComponent(appPath)}`;
   },
@@ -105,25 +91,17 @@ const Api = {
     });
   },
 
-  scanShortcuts(appPath) {
-    return this.request("/api/shortcuts/scan", {
-      method: "POST",
-      body: JSON.stringify({ app_path: appPath })
-    });
-  },
-
-  replaceShortcuts(appPath, ruleId) {
-    return this.request("/api/shortcuts/replace", {
-      method: "POST",
-      body: JSON.stringify({ app_path: appPath, rule_id: ruleId })
-    });
-  },
-
-  restoreShortcuts(ruleId = "") {
-    return this.request("/api/shortcuts/restore", {
-      method: "POST",
-      body: JSON.stringify(ruleId ? { rule_id: ruleId } : {})
-    });
+  /* IFEO interception (replaces the retired .lnk management) */
+  Intercept: {
+    status() {
+      return Api.request("/api/intercept/status");
+    },
+    apply() {
+      return Api.request("/api/intercept/apply", { method: "POST", body: "{}" });
+    },
+    restore() {
+      return Api.request("/api/intercept/restore", { method: "POST", body: "{}" });
+    }
   }
 };
 

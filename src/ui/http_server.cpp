@@ -25,6 +25,7 @@ static std::string statusText(int status) {
         case 403: return "Forbidden";
         case 404: return "Not Found";
         case 409: return "Conflict";
+        case 415: return "Unsupported Media Type";
         case 500: return "Internal Server Error";
         default: return "OK";
     }
@@ -289,6 +290,24 @@ void HttpServer::handleClient(uintptr_t clientSocket) {
 
 HttpResponse HttpServer::route(const HttpRequest& request) {
     HttpResponse response;
+    // 仅接受本机来源：阻断跨站请求(CSRF)、DNS rebinding 与 text/plain 简单请求。
+    auto hostIt = request.headers.find("host");
+    if (hostIt != request.headers.end()) {
+        std::string host = toLowerAscii(hostIt->second);
+        size_t colon = host.find(':');
+        if (colon != std::string::npos) host = host.substr(0, colon);
+        if (host != "127.0.0.1" && host != "localhost" && host != "[::1]") return errorResponse("非法来源", 403);
+    }
+    auto originIt = request.headers.find("origin");
+    if (originIt != request.headers.end() && !originIt->second.empty()) {
+        std::string origin = toLowerAscii(originIt->second);
+        if (origin.find("http://127.0.0.1") != 0 && origin.find("http://localhost") != 0 && origin.find("http://[::1]") != 0) return errorResponse("非法来源", 403);
+    }
+    if (request.method == "POST") {
+        auto ctIt = request.headers.find("content-type");
+        if (ctIt != request.headers.end() && toLowerAscii(ctIt->second).find("application/json") == std::string::npos)
+            return errorResponse("需要 application/json", 415);
+    }
     if (api_->handle(request, response)) return response;
 
     fs::path root = frontendRoot();

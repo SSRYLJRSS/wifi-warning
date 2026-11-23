@@ -1,59 +1,31 @@
 param(
-  [string]$Configuration = "Release"
+  [string]$Version = "2.0.0"
 )
-
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$sourceBin = Join-Path $root "build\mingw\bin"
-$portableBin = $root
-$isPortableLayout = (Test-Path -LiteralPath (Join-Path $portableBin "wifi-warning.exe")) -and -not (Test-Path -LiteralPath (Join-Path $root "CMakeLists.txt"))
-$bin = if ($isPortableLayout) { $portableBin } else { $sourceBin }
-$distRoot = if ($isPortableLayout) { Join-Path $root "dist" } else { Join-Path $root "build\dist" }
+$bin = Join-Path $root "build"
+$distRoot = Join-Path $root "dist"
 $packageDir = Join-Path $distRoot "WiFiWarning"
-$zipPath = Join-Path $distRoot "WiFiWarning-portable.zip"
+$zipPath = Join-Path $distRoot ("wifi-warning-v{0}-win64.zip" -f $Version)
 
-if (-not $isPortableLayout -and ((-not (Test-Path (Join-Path $bin "wifi-warning.exe"))) -or (-not (Test-Path (Join-Path $bin "ww-launch.exe"))))) {
-  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "scripts\build-mingw.ps1") -Configuration $Configuration
-  if ($LASTEXITCODE -ne 0) {
-    throw "build failed"
-  }
+foreach ($exe in @("wifi-warning.exe", "ww-launch.exe", "ww-admin.exe")) {
+  if (-not (Test-Path -LiteralPath (Join-Path $bin $exe))) { throw "required binary missing: $exe (run scripts\build-msvc.bat first)" }
 }
 
-foreach ($requiredExe in @("wifi-warning.exe", "ww-launch.exe")) {
-  $requiredPath = Join-Path $bin $requiredExe
-  if (-not (Test-Path -LiteralPath $requiredPath)) {
-    throw "required binary was not found: $requiredPath"
-  }
-}
-
-if (Test-Path $packageDir) {
-  Remove-Item -LiteralPath $packageDir -Recurse -Force
-}
+if (Test-Path $packageDir) { Remove-Item -LiteralPath $packageDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
 
-Copy-Item -LiteralPath (Join-Path $bin "wifi-warning.exe") -Destination $packageDir
-Copy-Item -LiteralPath (Join-Path $bin "ww-launch.exe") -Destination $packageDir
+foreach ($exe in @("wifi-warning.exe", "ww-launch.exe", "ww-admin.exe")) {
+  Copy-Item -LiteralPath (Join-Path $bin $exe) -Destination $packageDir
+}
 Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $root "LICENSE") -Destination $packageDir
-Copy-Item -LiteralPath (Join-Path $root "config.json") -Destination $packageDir
+if (Test-Path (Join-Path $root "restore-interception.cmd")) { Copy-Item -LiteralPath (Join-Path $root "restore-interception.cmd") -Destination $packageDir }
 Copy-Item -Recurse -Force -LiteralPath (Join-Path $root "frontend") -Destination $packageDir
+if (Test-Path (Join-Path $root "docs\screens")) { Copy-Item -Recurse -Force -LiteralPath (Join-Path $root "docs\screens") -Destination (Join-Path $packageDir "docs") }
 New-Item -ItemType Directory -Force -Path (Join-Path $packageDir "frontend\assets\icons") | Out-Null
 $sourceIcon = Join-Path $root "src\resources\icon.ico"
-if (Test-Path -LiteralPath $sourceIcon) {
-  Copy-Item -Force -LiteralPath $sourceIcon -Destination (Join-Path $packageDir "frontend\assets\icons\favicon.ico")
-}
-
-# No test scripts in release package
-
-@'
-@echo off
-setlocal
-cd /d "%~dp0"
-wifi-warning.exe --uninstall-restore
-echo.
-echo If WiFi Warning is still running, exit it from the tray menu before deleting this folder.
-pause
-'@ | Set-Content -LiteralPath (Join-Path $packageDir "restore-shortcuts.cmd") -Encoding ASCII
+if (Test-Path -LiteralPath $sourceIcon) { Copy-Item -Force -LiteralPath $sourceIcon -Destination (Join-Path $packageDir "frontend\assets\icons\favicon.ico") }
 
 @'
 @echo off
@@ -62,11 +34,8 @@ cd /d "%~dp0"
 start "" wifi-warning.exe --minimized
 '@ | Set-Content -LiteralPath (Join-Path $packageDir "start-minimized.cmd") -Encoding ASCII
 
-if (Test-Path $zipPath) {
-  Remove-Item -LiteralPath $zipPath -Force
-}
+if (Test-Path $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
 Compress-Archive -Path (Join-Path $packageDir "*") -DestinationPath $zipPath -Force
-
 Write-Host "Packaged:"
 Write-Host "  $packageDir"
 Write-Host "  $zipPath"

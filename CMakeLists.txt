@@ -22,12 +22,15 @@ endif()
 add_library(ww_core STATIC
     src/core/auto_start.cpp
     src/core/config_manager.cpp
+    src/core/dyn_bcrypt.cpp
+    src/core/dyn_version.cpp
+    src/core/dyn_wlan.cpp
     src/core/http_probe.cpp
     src/core/json.cpp
     src/core/logger.cpp
     src/core/network_manager.cpp
+    src/core/ifeo_manager.cpp
     src/core/rule_engine.cpp
-    src/core/shortcut_manager.cpp
     src/core/util.cpp
     src/core/wifi_detector.cpp
     src/core/wifi_switcher.cpp
@@ -63,7 +66,16 @@ add_executable(ww-launch WIN32
     src/ww-launch/main.cpp
     src/resources/ww-launch.rc
 )
-target_link_libraries(ww-launch PRIVATE iphlpapi shell32 wlanapi ws2_32)
+target_link_libraries(ww-launch PRIVATE ww_core ws2_32)
+
+add_executable(ww-admin
+    src/ww-admin/main.cpp
+    src/resources/ww-admin.rc
+)
+target_link_libraries(ww-admin PRIVATE ww_core)
+if(MSVC)
+    target_link_options(ww-admin PRIVATE /MANIFEST:NO)
+endif()
 
 add_executable(ww-smoke
     tests/smoke.cpp
@@ -78,7 +90,7 @@ if(MINGW)
     target_link_options(ww-smoke PRIVATE -municode)
 endif()
 
-install(TARGETS wifi-warning ww-launch RUNTIME DESTINATION .)
+install(TARGETS wifi-warning ww-launch ww-admin RUNTIME DESTINATION .)
 install(DIRECTORY frontend DESTINATION .)
 install(FILES config.json DESTINATION .)
 install(FILES README.md DESTINATION . OPTIONAL)

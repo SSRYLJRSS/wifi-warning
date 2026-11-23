@@ -54,4 +54,15 @@ std::optional<RuleMatch> findBlockingRuleForNetworks(const AppConfig& config, co
     return std::nullopt;
 }
 
+bool isAppManaged(const AppConfig& config, const std::string& appPath) {
+    if (appPath.empty()) return false;
+    std::string normalized = normalizePath(appPath);
+    for (const auto& rule : config.rules) {
+        for (const auto& app : rule.blocked_apps) {
+            if (normalizePath(app.original_path) == normalized) return true;
+        }
+    }
+    return false;
+}
+
 }

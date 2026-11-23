@@ -28,22 +28,10 @@ static int intField(const JsonValue& value, const std::string& key, int fallback
 }
 
 static JsonValue appToJson(const BlockedApp& app) {
-    JsonValue::Array shortcutPaths;
-    for (const auto& path : app.shortcut_paths) shortcutPaths.push_back(path);
-
-    JsonValue::Array replacements;
-    for (const auto& shortcut : app.replaced_shortcuts) {
-        replacements.push_back(JsonValue::Object{
-            {"original_lnk", shortcut.original_lnk},
-            {"backup_lnk", shortcut.backup_lnk}
-        });
-    }
     return JsonValue::Object{
         {"name", app.name},
         {"original_path", app.original_path},
-        {"icon_path", app.icon_path},
-        {"shortcut_paths", shortcutPaths},
-        {"replaced_shortcuts", replacements}
+        {"icon_path", app.icon_path}
     };
 }
 
@@ -51,21 +39,10 @@ static BlockedApp appFromJson(const JsonValue& appValue) {
     BlockedApp app;
     app.name = stringField(appValue, "name");
     app.original_path = stringField(appValue, "original_path");
+    if (app.original_path.empty()) app.original_path = stringField(appValue, "path");
     app.icon_path = stringField(appValue, "icon_path");
-    if (const auto* paths = field(appValue, "shortcut_paths")) {
-        for (const auto& pathValue : paths->asArray()) {
-            std::string path = pathValue.asString();
-            if (!path.empty()) app.shortcut_paths.push_back(path);
-        }
-    }
-    if (const auto* shortcuts = field(appValue, "replaced_shortcuts")) {
-        for (const auto& shortcutValue : shortcuts->asArray()) {
-            app.replaced_shortcuts.push_back({
-                stringField(shortcutValue, "original_lnk"),
-                stringField(shortcutValue, "backup_lnk")
-            });
-        }
-    }
+    if (app.icon_path.empty()) app.icon_path = app.original_path;
+    if (app.name.empty()) app.name = app.original_path;
     return app;
 }
 
@@ -111,11 +88,17 @@ JsonValue configToJson(const AppConfig& config) {
         });
     }
 
+    JsonValue::Object netState;
+    netState["last_disabled_type"] = config.network_state.last_disabled_type;
+    netState["last_disabled_name"] = config.network_state.last_disabled_name;
+    netState["last_disabled_epoch"] = static_cast<double>(config.network_state.last_disabled_epoch);
+
     return JsonValue::Object{
         {"version", config.version},
         {"settings", settings},
         {"app_groups", appGroups},
-        {"rules", rules}
+        {"rules", rules},
+        {"network_state", netState}
     };
 }
 
@@ -133,6 +116,14 @@ AppConfig configFromJson(const JsonValue& value) {
         config.settings.bypass_timeout_minutes = intField(*settings, "bypass_timeout_minutes", config.settings.bypass_timeout_minutes);
         if (const auto* bypassEpoch = field(*settings, "bypass_until_epoch")) {
             config.settings.bypass_until_epoch = static_cast<std::int64_t>(bypassEpoch->asNumber(0));
+        }
+    }
+
+    if (const auto* ns = field(value, "network_state")) {
+        config.network_state.last_disabled_type = stringField(*ns, "last_disabled_type", "");
+        config.network_state.last_disabled_name = stringField(*ns, "last_disabled_name", "");
+        if (const auto* ep = field(*ns, "last_disabled_epoch")) {
+            config.network_state.last_disabled_epoch = static_cast<std::int64_t>(ep->asNumber(0));
         }
     }
 
@@ -177,6 +168,17 @@ AppConfig configFromJson(const JsonValue& value) {
             if (!rule.id.empty() && !rule.network_id.empty()) config.rules.push_back(rule);
         }
     }
+
+    // 规则以软件组为准：若规则绑定了软件组，则其被管控程序始终与组内程序保持一致。
+    // 这样任何前端（含仅提交 app_group_id 的界面）都能得到正确的 IFEO 受管 exe 列表。
+    for (auto& rule : config.rules) {
+        if (rule.app_group_id.empty()) continue;
+        for (const auto& group : config.app_groups) {
+            if (group.id != rule.app_group_id) continue;
+            if (!group.apps.empty()) rule.blocked_apps = group.apps;  // 组被清空时保留规则原有清单，避免误清
+            break;
+        }
+    }
     return config;
 }
 
@@ -186,7 +188,7 @@ ConfigManager::ConfigManager(std::wstring path) : path_(std::move(path)) {
 
 AppConfig ConfigManager::defaults() {
     AppConfig config;
-    config.version = "1.9.5";
+    config.version = "2.0.0";
     config.settings.auto_start = true;
     config.settings.protection_enabled = true;
     config.settings.dark_mode = true;
@@ -208,6 +210,16 @@ AppConfig ConfigManager::load() {
     }
 
     std::string raw = readTextFileUtf8(path_);
+    if (raw.empty()) {
+        std::error_code sizeEc;
+        auto fileSize = fs::file_size(fs::path(path_), sizeEc);
+        if (!sizeEc && fileSize > 0) {
+            // 文件存在却读取为空：多半被占用/权限/杀软锁定。保留旧缓存，绝不用默认值覆盖真实配置。
+            last_status_.error = "配置读取失败（文件存在但无法读取），已保留上次配置";
+            if (!loaded_) { cached_ = defaults(); loaded_ = true; }
+            return cached_;
+        }
+    }
     std::string error;
     auto parsed = parseJson(raw, &error);
     if (!parsed) {
@@ -261,6 +273,13 @@ AppConfig ConfigManager::get() {
 
 bool ConfigManager::update(const AppConfig& config) {
     return save(config);
+}
+
+bool ConfigManager::mutate(const std::function<void(AppConfig&)>& fn) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    AppConfig cfg = load();
+    fn(cfg);
+    return save(cfg);
 }
 
 std::wstring ConfigManager::path() const {

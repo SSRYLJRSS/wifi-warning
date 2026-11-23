@@ -1,6 +1,6 @@
 #include "ui/tray_icon.h"
 
-#include "core/shortcut_manager.h"
+#include "core/ifeo_manager.h"
 #include "core/util.h"
 #include "core/wifi_detector.h"
 #include "core/network_manager.h"
@@ -15,6 +15,9 @@
 #include <thread>
 #include <vector>
 #include <atomic>
+#include <mutex>
+#include <functional>
+#include <chrono>
 
 namespace ww {
 
@@ -42,7 +45,7 @@ static VOID CALLBACK wlanNotificationCallback(
 // Register WLAN notification callback on the WLAN handle.
 // WlanRegisterNotification registers globally for ALL interfaces on the handle,
 // not per-interface. Returns true if registration succeeded.
-static bool registerWlanNotification(HANDLE wlanHandle) {
+[[maybe_unused]] static bool registerWlanNotification(HANDLE wlanHandle) {
     if (!dyn_wlan::fn_WlanRegisterNotification) return false;
     DWORD result = dyn_wlan::fn_WlanRegisterNotification(
         wlanHandle,
@@ -64,12 +67,16 @@ static constexpr UINT ID_EXIT = 1004;
 static constexpr UINT ID_CURRENT = 1005;
 static constexpr UINT ID_WIRED_BASE = 2001;
 static constexpr UINT ID_WIRED_MAX = 2100;
+static constexpr UINT ID_WIFI_TOGGLE = 1006;
+static constexpr UINT ID_RESTORE_LAST = 1007;
 static constexpr UINT ID_SELF_TEST_TIMER = 3001;
 
 struct TrayIconImpl {
     ConfigManager& config;
     Logger& logger;
     int port;
+    std::mutex state_mutex;
+    std::atomic<int> pending_actions{0};
     HWND hwnd = nullptr;
     NOTIFYICONDATAW nid{};
     HICON icon = nullptr;
@@ -79,6 +86,7 @@ struct TrayIconImpl {
     bool icon_added = false;
     bool no_adapter_notice_shown = false;
     std::vector<WiredAdapter> cached_wired_adapters;
+    std::vector<WiredAdapter> cached_wifi_adapters;
     std::thread poller;
     struct Notice {
         std::wstring title;
@@ -98,29 +106,60 @@ static void openLocal(int port, const std::string& path) {
     openUrlInBrowser("http://localhost:" + std::to_string(port) + path);
 }
 
-static void logShortcutResult(TrayIconImpl* impl, const ShortcutOperationResult& result) {
+static int restoreIfeoInterception(TrayIconImpl* impl) {
+    auto config = impl->config.load();
+    std::wstring admin = std::wstring(executableDir()) + L"\\ww-admin.exe";
+    int code = -1;
+    if (fileExists(admin)) {
+        SHELLEXECUTEINFOW sei{};
+        sei.cbSize = sizeof(sei);
+        sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+        sei.lpVerb = L"runas";
+        sei.lpFile = admin.c_str();
+        sei.lpParameters = L"--ifeo-restore";
+        sei.nShow = SW_HIDE;
+        if (ShellExecuteExW(&sei) && sei.hProcess) {
+            WaitForSingleObject(sei.hProcess, 120000);
+            DWORD exitCode = 0;
+            GetExitCodeProcess(sei.hProcess, &exitCode);
+            CloseHandle(sei.hProcess);
+            code = static_cast<int>(exitCode);
+        }
+    }
     LogRecord record;
     record.timestamp = nowIsoLocal();
-    record.action = result.ok ? "shortcut_restored" : "shortcut_restore_failed";
-    record.shortcut = result.shortcut;
-    record.backup = result.backup;
-    record.error = result.error;
+    record.action = code == 0 ? "ifeo_restored" : "ifeo_restore_failed";
     impl->logger.write(record);
-}
-
-static int restoreAllTrackedShortcuts(TrayIconImpl* impl) {
-    auto config = impl->config.load();
-    auto results = restoreAllShortcuts(config);
-    int failures = 0;
-    for (const auto& result : results) {
-        logShortcutResult(impl, result);
-        if (!result.ok) ++failures;
-    }
-
-    clearRestoredShortcutRecords(config, results);
+    if (code != 0) return 1;
     config.settings.protection_enabled = false;
     impl->config.save(config);
-    return failures;
+    return 0;
+}
+
+static int syncIfeoInterception(TrayIconImpl* impl) {
+    std::wstring admin = std::wstring(executableDir()) + L"\\ww-admin.exe";
+    int code = -1;
+    if (fileExists(admin)) {
+        SHELLEXECUTEINFOW sei{};
+        sei.cbSize = sizeof(sei);
+        sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+        sei.lpVerb = L"runas";
+        sei.lpFile = admin.c_str();
+        sei.lpParameters = L"--ifeo-sync";
+        sei.nShow = SW_HIDE;
+        if (ShellExecuteExW(&sei) && sei.hProcess) {
+            WaitForSingleObject(sei.hProcess, 120000);
+            DWORD exitCode = 0;
+            GetExitCodeProcess(sei.hProcess, &exitCode);
+            CloseHandle(sei.hProcess);
+            code = static_cast<int>(exitCode);
+        }
+    }
+    LogRecord record;
+    record.timestamp = nowIsoLocal();
+    record.action = code == 0 ? "ifeo_synced" : "ifeo_sync_failed";
+    impl->logger.write(record);
+    return code == 0 ? 0 : 1;
 }
 
 static void showBalloon(TrayIconImpl* impl, const std::wstring& title, const std::wstring& message, DWORD flags = NIIF_INFO) {
@@ -133,39 +172,48 @@ static void showBalloon(TrayIconImpl* impl, const std::wstring& title, const std
     Shell_NotifyIconW(NIM_MODIFY, &notice);
 }
 
-static void disableProtectionForNoAdapter(TrayIconImpl* impl, const WifiStatus& wifi) {
-    if (!isNoWifiAdapter(wifi)) return;
-    auto config = impl->config.load();
-    if (!config.settings.protection_enabled) return;
-
-    restoreAllTrackedShortcuts(impl);
-
-    LogRecord record;
-    record.timestamp = nowIsoLocal();
-    record.action = "protection_disabled_no_adapter";
-    record.error = wifi.error;
-    impl->logger.write(record);
-
-    if (!impl->no_adapter_notice_shown) {
-        impl->no_adapter_notice_shown = true;
-        showBalloon(
-            impl,
-            L"\u672a\u68c0\u6d4b\u5230 WiFi \u9002\u914d\u5668",
-            L"\u5df2\u5173\u95ed\u9632\u62a4\u5e76\u5c1d\u8bd5\u8fd8\u539f\u5feb\u6377\u65b9\u5f0f\u3002",
-            NIIF_WARNING);
-    }
+// Run a menu action off the UI thread while guarding impl lifetime (no dangling on exit).
+static void runAsyncAction(TrayIconImpl* impl, std::function<void()> fn) {
+    impl->pending_actions.fetch_add(1);
+    std::thread([impl, fn] {
+        fn();
+        impl->pending_actions.fetch_sub(1);
+    }).detach();
 }
 
+static void disableProtectionForNoAdapter(TrayIconImpl* impl, const WifiStatus& wifi) {
+    if (!isNoWifiAdapter(wifi)) return;
+    // 不再因“没有 WiFi 网卡”自动关闭防护：以太网机器会因此被误关而导致漏拦。
+    if (impl->no_adapter_notice_shown) return;
+    impl->no_adapter_notice_shown = true;
+    LogRecord record;
+    record.timestamp = nowIsoLocal();
+    record.action = "no_adapter_detected";
+    record.error = wifi.error;
+    impl->logger.write(record);
+    showBalloon(impl, L"未检测到 WiFi 适配器", L"有线网络规则仍会正常生效，防护保持开启。", NIIF_INFO);
+}
 static void showMenu(HWND hwnd, TrayIconImpl* impl) {
     HMENU menu = CreatePopupMenu();
+    std::vector<WiredAdapter> wifiAdaptersCopy, wiredAdaptersCopy;
+    { std::lock_guard<std::mutex> lk(impl->state_mutex); wifiAdaptersCopy = impl->cached_wifi_adapters; wiredAdaptersCopy = impl->cached_wired_adapters; }
     std::wstring wifi = L"当前网络: ";
     wifi += impl->ssid.empty() ? L"未连接" : utf8ToWide(impl->ssid);
     if (!impl->adapter_available) wifi = L"\u5f53\u524d\u7f51\u7edc: \u672a\u68c0\u6d4b\u5230 WiFi \u9002\u914d\u5668";
     AppendMenuW(menu, MF_STRING | MF_DISABLED, ID_CURRENT, wifi.c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
+    if (!wifiAdaptersCopy.empty()) {
+        const auto& wa = wifiAdaptersCopy[0];
+        AppendMenuW(menu, MF_STRING, ID_WIFI_TOGGLE, wa.enabled ? L"禁用 WiFi" : L"启用 WiFi");
+    } else {
+        auto cfg = impl->config.get();
+        if (cfg.network_state.last_disabled_type == "wifi" && !cfg.network_state.last_disabled_name.empty())
+            AppendMenuW(menu, MF_STRING, ID_RESTORE_LAST, L"启用 WiFi");
+    }
+
     // Wired adapter toggle entries (use cached list to avoid blocking UI thread with netsh)
-    const auto& wiredAdapters = impl->cached_wired_adapters;
+    const auto& wiredAdapters = wiredAdaptersCopy;
     if (!wiredAdapters.empty()) {
         for (int i = 0; i < static_cast<int>(wiredAdapters.size()); ++i) {
             if (static_cast<unsigned>(i) >= ID_WIRED_MAX - ID_WIRED_BASE) break;
@@ -186,6 +234,11 @@ static void showMenu(HWND hwnd, TrayIconImpl* impl) {
     }
 
     auto config = impl->config.load();
+    if (!config.network_state.last_disabled_name.empty()) {
+        std::wstring restoreLabel = L"恢复上次禁用: " + utf8ToWide(config.network_state.last_disabled_name);
+        AppendMenuW(menu, MF_STRING, ID_RESTORE_LAST, restoreLabel.c_str());
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    }
     AppendMenuW(menu, MF_STRING, ID_TOGGLE, config.settings.protection_enabled ? L"防护: 开启" : L"防护: 关闭");
     AppendMenuW(menu, MF_STRING, ID_SETTINGS, L"设置");
     AppendMenuW(menu, MF_STRING, ID_STATS, L"统计");
@@ -204,21 +257,76 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_COMMAND && impl) {
         switch (LOWORD(wp)) {
             case ID_SETTINGS:
-                openLocal(impl->port, "/settings");
+                openLocal(impl->port, "/");
                 return 0;
             case ID_STATS:
-                openLocal(impl->port, "/settings#stats");
+                openLocal(impl->port, "/?view=activity");
                 return 0;
+            case ID_WIFI_TOGGLE: {
+                WiredAdapter adapter;
+                bool haveAdapter = false;
+                { std::lock_guard<std::mutex> lk(impl->state_mutex); if (!impl->cached_wifi_adapters.empty()) { adapter = impl->cached_wifi_adapters[0]; haveAdapter = true; } }
+                if (haveAdapter) {
+                    bool newState = !adapter.enabled;
+                    runAsyncAction(impl, [impl, adapter, newState] {
+                        auto result = setAdapterEnabled("wifi", adapter.id, newState);
+                        if (result.ok && !newState) {
+                            impl->config.mutate([&](AppConfig& c) {
+                                c.network_state.last_disabled_type = "wifi";
+                                c.network_state.last_disabled_name = adapter.name.empty() ? adapter.id : adapter.name;
+                                c.network_state.last_disabled_epoch = nowUnixSeconds();
+                            });
+                        } else if (result.ok && newState) {
+                            impl->config.mutate([&](AppConfig& c) {
+                                if (c.network_state.last_disabled_name == adapter.id || c.network_state.last_disabled_name == adapter.name) {
+                                    c.network_state.last_disabled_type.clear();
+                                    c.network_state.last_disabled_name.clear();
+                                    c.network_state.last_disabled_epoch = 0;
+                                }
+                            });
+                        }
+                        showBalloon(impl, L"WiFi", result.ok ? (newState ? L"已启用 WiFi" : L"已禁用 WiFi") : L"操作失败（可能需要管理员权限）");
+                        { std::lock_guard<std::mutex> lk(impl->state_mutex); impl->cached_wifi_adapters = listWifiAdapters(); impl->cached_wired_adapters = listWiredAdapters(); }
+                    });
+                }
+                return 0;
+            }
+            case ID_RESTORE_LAST: {
+                std::string type, name;
+                { auto snap = impl->config.get(); type = snap.network_state.last_disabled_type; name = snap.network_state.last_disabled_name; }
+                if (name.empty()) return 0;
+                runAsyncAction(impl, [impl, type, name] {
+                    auto result = setAdapterEnabled(type, name, true);
+                    if (result.ok) {
+                        impl->config.mutate([&](AppConfig& c) {
+                            c.network_state.last_disabled_type.clear();
+                            c.network_state.last_disabled_name.clear();
+                            c.network_state.last_disabled_epoch = 0;
+                        });
+                        showBalloon(impl, L"恢复连接", L"已恢复上次禁用的连接");
+                    } else {
+                        showBalloon(impl, L"恢复连接", L"恢复失败（可能需要管理员权限）");
+                    }
+                    { std::lock_guard<std::mutex> lk(impl->state_mutex); impl->cached_wifi_adapters = listWifiAdapters(); impl->cached_wired_adapters = listWiredAdapters(); }
+                });
+                return 0;
+            }
             case ID_TOGGLE: {
                 auto config = impl->config.load();
                 if (config.settings.protection_enabled) {
-                    int failures = restoreAllTrackedShortcuts(impl);
+                    int failures = restoreIfeoInterception(impl);
                     if (failures > 0) {
-                        MessageBoxW(hwnd, L"防护已关闭，但有部分快捷方式还原失败。请在设置页查看详情。", L"WiFi 提醒", MB_OK | MB_ICONWARNING);
+                        MessageBoxW(hwnd, L"还原失败，防护仍保持开启。请重试或使用设置页“完全还原”。", L"WiFi 提醒", MB_OK | MB_ICONWARNING);
                     }
                 } else {
-                    config.settings.protection_enabled = true;
-                    impl->config.save(config);
+                    int code = syncIfeoInterception(impl);
+                    if (code == 0) {
+                        config.settings.protection_enabled = true;
+                        impl->config.save(config);
+                        showBalloon(impl, L"防护已开启", L"已写入系统拦截。");
+                    } else {
+                        MessageBoxW(hwnd, L"开启防护失败：需要管理员授权或写入失败，请稍后重试。", L"WiFi 提醒", MB_OK | MB_ICONWARNING);
+                    }
                 }
                 return 0;
             }
@@ -253,15 +361,15 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (config.settings.protection_enabled) {
                     int choice = MessageBoxW(
                         hwnd,
-                        L"防护仍在开启。退出前是否还原所有已替换的快捷方式并关闭防护？\n\n选择“是”还原并退出；选择“否”直接退出；选择“取消”返回。",
+                        L"防护仍在开启。退出前是否还原所有 IFEO 拦截并关闭防护？\n\n选择“是”还原并退出；选择“否”直接退出；选择“取消”返回。",
                         L"WiFi 提醒",
                         MB_YESNOCANCEL | MB_ICONQUESTION);
                     if (choice == IDCANCEL) {
                         shouldExit = false;
                     } else if (choice == IDYES) {
-                        int failures = restoreAllTrackedShortcuts(impl);
+                        int failures = restoreIfeoInterception(impl);
                         if (failures > 0) {
-                            MessageBoxW(hwnd, L"有部分快捷方式还原失败，应用仍将退出。", L"WiFi 提醒", MB_OK | MB_ICONWARNING);
+                            MessageBoxW(hwnd, L"有部分 IFEO 拦截还原失败，应用仍将退出。", L"WiFi 提醒", MB_OK | MB_ICONWARNING);
                         }
                     }
                 } else {
@@ -278,7 +386,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     if (msg == WM_TRAY && impl) {
         if (lp == WM_RBUTTONUP) showMenu(hwnd, impl);
-        if (lp == WM_LBUTTONDBLCLK) openLocal(impl->port, "/settings");
+        if (lp == WM_LBUTTONDBLCLK) openLocal(impl->port, "/");
         return 0;
     }
     if (msg == WM_TIMER && wp == ID_SELF_TEST_TIMER) {
@@ -301,6 +409,9 @@ TrayIcon::~TrayIcon() {
     // Wake poller from WaitForSingleObject so it exits promptly (< 1s)
     if (g_wifiChangeEvent) SetEvent(g_wifiChangeEvent);
     if (impl_->poller.joinable()) impl_->poller.join();
+    for (int i = 0; i < 600 && impl_->pending_actions.load() > 0; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
     if (impl_->icon_added) Shell_NotifyIconW(NIM_DELETE, &impl_->nid);
     if (impl_->icon) DestroyIcon(impl_->icon);
 }
@@ -374,20 +485,7 @@ int TrayIcon::run(int selfTestMs, const std::wstring& readyFile, int selfTestCom
         // Initial query with cache priming
         auto wifi = getCurrentWifi();
         updateWifiText(wifi);
-        impl_->cached_wired_adapters = listWiredAdapters();
-
-        // Try to register WLAN notification callback for event-driven refresh.
-        // The WLAN handle must remain open for the lifetime of the callback,
-        // so we allocate it on the heap and let the poller thread clean it up on exit.
-        // WlanRegisterNotification is handle-global (all interfaces), so register once.
-        auto* wlanHolder = new dyn_wlan::WlanHandle();
-        if (dyn_wlan::isAvailable()) {
-            DWORD negotiated = 0;
-            if (dyn_wlan::fn_WlanOpenHandle(2, nullptr, &negotiated, &wlanHolder->handle) == ERROR_SUCCESS) {
-                registerWlanNotification(wlanHolder->handle);
-            }
-        }
-
+        { std::lock_guard<std::mutex> lk(impl_->state_mutex); impl_->cached_wired_adapters = listWiredAdapters(); impl_->cached_wifi_adapters = listWifiAdapters(); }
         while (impl_->running) {
             // Wait for WLAN change event, with 60-second timeout as safety net
             DWORD waitResult = WaitForSingleObject(g_wifiChangeEvent, 60000);
@@ -403,13 +501,11 @@ int TrayIcon::run(int selfTestMs, const std::wstring& readyFile, int selfTestCom
                 refreshWifiCache();
                 auto wifi = getCurrentWifi();
                 updateWifiText(wifi);
-                impl_->cached_wired_adapters = listWiredAdapters();
+                { std::lock_guard<std::mutex> lk(impl_->state_mutex); impl_->cached_wired_adapters = listWiredAdapters(); impl_->cached_wifi_adapters = listWifiAdapters(); }
                 trimCurrentProcessWorkingSet();
             }
         }
 
-        // Cleanup: close WLAN handle (unregisters callback implicitly)
-        delete wlanHolder;
         // Cleanup: event handle
         if (g_wifiChangeEvent) {
             CloseHandle(g_wifiChangeEvent);

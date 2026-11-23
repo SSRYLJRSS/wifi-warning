@@ -1,12 +1,134 @@
 <!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="0; url=/settings">
-    <title>WiFi 提醒</title>
-  </head>
-  <body>
-    <a href="/settings">打开设置</a>
-  </body>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>WiFiWarning · 网络守护</title>
+<link rel="icon" href="/assets/icons/wifi-warning.svg">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 13a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2Zm0 0 4 4M3.5 18a9.5 9.5 0 1 1 17 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.2 2.9 7.6 7 9 4.1-1.4 7-4.8 7-9V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-box" viewBox="0 0 24 24"><path d="M4 8 12 4l8 4v8l-8 4-8-4V8Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M4 8l8 4 8-4M12 12v8" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+<symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 4 12 2.5-6H21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-cog" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 2.5v2.2M12 19.3v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+<symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2.5 8.5a14 14 0 0 1 19 0M5.5 12a9.5 9.5 0 0 1 13 0M8.5 15.4a5 5 0 0 1 7 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="19" r="1.5" fill="currentColor"/></symbol>
+<symbol id="i-cable" viewBox="0 0 24 24"><path d="M7 3v5m10-5v5M5 8h14v4a4 4 0 0 1-4 4h-6a4 4 0 0 1-4-4V8Zm7 8v6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8M6.5 6.5a8 8 0 1 0 11 0" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+<symbol id="i-restore" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+</defs></svg>
+
+<div class="app">
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark"><svg><use href="#i-shield"/></svg></div>
+      <div class="brand-text"><strong data-i18n="appName">WiFiWarning</strong><span data-i18n="appSub">网络守护</span></div>
+    </div>
+    <nav class="nav" id="nav">
+      <button class="nav-item active" data-view="overview"><svg><use href="#i-gauge"/></svg><span data-i18n="navOverview">概览</span></button>
+      <button class="nav-item" data-view="rules"><svg><use href="#i-shield"/></svg><span data-i18n="navRules">拦截规则</span></button>
+      <button class="nav-item" data-view="groups"><svg><use href="#i-box"/></svg><span data-i18n="navGroups">软件组</span></button>
+      <button class="nav-item" data-view="activity"><svg><use href="#i-pulse"/></svg><span data-i18n="navActivity">动态</span></button>
+      <button class="nav-item" data-view="settings"><svg><use href="#i-cog"/></svg><span data-i18n="navSettings">设置</span></button>
+    </nav>
+    <div class="rail-foot">
+      <label class="switch-row"><span data-i18n="protection">防护</span><input type="checkbox" id="protectionSwitch" class="sw"><i class="sw-track"></i></label>
+      <button class="lang-toggle" id="langToggle" title="Language">中 / EN</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-title"><h1 id="viewTitle">概览</h1><p id="viewSub" class="muted"></p></div>
+      <div class="topbar-status" id="liveStatus">
+        <span class="chip" id="chipWifi"><svg><use href="#i-wifi"/></svg><b>检测中</b></span>
+        <span class="chip" id="chipEth"><svg><use href="#i-cable"/></svg><b>检测中</b></span>
+        <button class="icon-btn" id="refreshBtn" title="刷新"><svg><use href="#i-restore"/></svg></button>
+      </div>
+    </header>
+
+    <div class="views" id="views">
+      <!-- OVERVIEW -->
+      <section class="view active" data-view="overview">
+        <div class="status-grid">
+          <article class="net-card" id="wifiCard">
+            <div class="net-head"><span class="net-ico wifi"><svg><use href="#i-wifi"/></svg></span><div><p class="net-label">WiFi</p><h2 class="net-name" id="wifiSsid">—</h2></div><span class="dot" id="wifiDot"></span></div>
+            <div class="signal" id="wifiSignal" data-level="0"></div>
+            <p class="net-meta" id="wifiMeta">正在检测…</p>
+            <button class="btn lg block" id="wifiToggle">禁用 WiFi</button>
+          </article>
+          <article class="net-card" id="ethCard">
+            <div class="net-head"><span class="net-ico eth"><svg><use href="#i-cable"/></svg></span><div><p class="net-label">以太网</p><h2 class="net-name" id="ethName">—</h2></div><span class="dot" id="ethDot"></span></div>
+            <div class="eth-detail" id="ethDetail"><p class="net-meta">正在检测…</p></div>
+            <button class="btn lg block" id="ethToggle">禁用以太网</button>
+          </article>
+        </div>
+        <div class="row-actions">
+          <button class="btn ghost" id="restoreLastBtn"><svg><use href="#i-restore"/></svg><span data-i18n="restoreLast">恢复上次禁用的连接</span></button>
+          <span class="muted" id="restoreHint"></span>
+        </div>
+        <div class="stat-strip">
+          <div class="stat"><span data-i18n="todayBlocked">今日拦截</span><strong id="todayBlocked">0</strong></div>
+          <div class="stat"><span data-i18n="weekBlocked">本周拦截</span><strong id="weekBlocked">0</strong></div>
+          <div class="stat"><span data-i18n="topApp">最常受限</span><strong id="topApp">—</strong></div>
+        </div>
+        <div class="intercept-row"><span class="intercept-badge" id="ovInterceptBadge">—</span></div>
+      </section>
+
+      <!-- RULES -->
+      <section class="view" data-view="rules">
+        <div class="view-actions"><p class="muted" data-i18n="rulesHint">连接到指定网络时，被管控软件启动前会先经过提醒页。</p><button class="btn primary" id="addRuleBtn"><svg><use href="#i-plus"/></svg><span data-i18n="addRule">新建规则</span></button></div>
+        <div class="card-list" id="rulesList"></div>
+      </section>
+
+      <!-- GROUPS -->
+      <section class="view" data-view="groups">
+        <div class="view-actions"><p class="muted" data-i18n="groupsHint">把要管控的软件按组管理，规则引用软件组。</p><button class="btn primary" id="addGroupBtn"><svg><use href="#i-plus"/></svg><span data-i18n="newGroup">新建软件组</span></button></div>
+        <div class="card-list" id="groupsList"></div>
+      </section>
+
+      <!-- ACTIVITY -->
+      <section class="view" data-view="activity">
+        <div class="stat-strip"><div class="stat"><span data-i18n="todayBlocked">今日拦截</span><strong id="todayBlocked2">0</strong></div><div class="stat"><span data-i18n="weekBlocked">本周拦截</span><strong id="weekBlocked2">0</strong></div><div class="stat"><span data-i18n="topApp">最常受限</span><strong id="topApp2">—</strong></div></div>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th data-i18n="colTime">时间</th><th data-i18n="colNetwork">网络</th><th data-i18n="colApp">软件</th><th data-i18n="colResult">结果</th></tr></thead><tbody id="logRows"></tbody></table></div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="view" data-view="settings">
+        <div class="settings-grid">
+          <article class="card"><h3 data-i18n="setGeneral">通用</h3>
+            <label class="field-row"><span data-i18n="autoStart">开机启动</span><input type="checkbox" id="autoStartSwitch" class="sw"><i class="sw-track"></i></label>
+            <label class="field-row"><span data-i18n="darkMode">深色主题</span><input type="checkbox" id="darkSwitch" class="sw"><i class="sw-track"></i></label>
+            <label class="field"><span data-i18n="port">服务端口</span><input id="portInput" type="number" min="1024" max="65535"></label>
+          </article>
+          <article class="card"><h3 data-i18n="setSecurity">安全</h3>
+            <label class="field"><span data-i18n="bypassPwd">放行密码</span><input id="pwdInput" type="password" autocomplete="new-password" placeholder="设置新密码"></label>
+            <label class="field"><span data-i18n="bypassMin">放行时长(分钟)</span><input id="pwdMin" type="number" min="1" max="1440"></label>
+            <button class="btn primary" id="saveSecurity" data-i18n="save">保存</button>
+          </article>
+          <article class="card wide"><h3 data-i18n="setAdvanced">高级 · 拦截方式</h3>
+            <p class="muted" id="interceptStatus">—</p>
+            <div class="btn-row"><button class="btn primary" id="applyInterceptBtn" data-i18n="interceptApply">立即应用/修复拦截</button><button class="btn ghost" id="restoreAllBtn" data-i18n="interceptRestore">完全还原</button><button class="btn ghost" id="refreshIntercept" data-i18n="refresh">刷新</button></div>
+          </article>
+          <article class="card wide"><h3 data-i18n="about">关于</h3>
+            <p class="muted" id="aboutLine">WiFiWarning v2.0 · MIT License</p>
+            <p class="path-line" id="configPath"></p><p class="path-line" id="backupPath"></p>
+            <p><a href="https://github.com/SSRYLJRSS/wifi-warning" target="_blank" rel="noreferrer">SSRYLJRSS/wifi-warning</a></p>
+          </article>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toast" class="toast"></div>
+<script src="/js/i18n-v2.js"></script>
+<script src="/js/app.js"></script>
+</body>
 </html>

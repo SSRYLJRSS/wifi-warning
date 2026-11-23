@@ -463,6 +463,97 @@ NetworkActionResult setWiredAdapterEnabled(const std::string& adapterId, bool en
     return result;
 }
 
+static bool runNetshDirect(const std::wstring& args, DWORD& exitCode) {
+    wchar_t sysDirBuf[MAX_PATH]{};
+    UINT n = GetSystemDirectoryW(sysDirBuf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return false;
+    std::wstring exe = std::wstring(sysDirBuf, n) + L"\\netsh.exe";
+    std::wstring cmd = L"\"" + exe + L"\" " + args;
+    std::vector<wchar_t> cmdline(cmd.begin(), cmd.end());
+    cmdline.push_back(L'\0');
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    BOOL ok = CreateProcessW(exe.c_str(), cmdline.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    if (!ok) return false;
+    WaitForSingleObject(pi.hProcess, 30000);
+    exitCode = 1;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
+std::vector<WiredAdapter> listWifiAdapters() {
+    std::vector<WiredAdapter> out;
+    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    std::vector<unsigned char> buffer(16 * 1024);
+    ULONG size = static_cast<ULONG>(buffer.size());
+    ULONG result = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data()), &size);
+    if (result == ERROR_BUFFER_OVERFLOW) {
+        buffer.resize(size);
+        result = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data()), &size);
+    }
+    if (result == NO_ERROR) {
+        for (IP_ADAPTER_ADDRESSES* item = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data()); item; item = item->Next) {
+            if (item->IfType != IF_TYPE_IEEE80211) continue;
+            WiredAdapter adapter;
+            adapter.id = item->FriendlyName ? wideToUtf8(item->FriendlyName) : "";
+            adapter.name = adapter.id;
+            // GAA does not enumerate admin-disabled adapters; seen adapters are enabled.
+            adapter.enabled = true;
+            adapter.connected = (item->OperStatus == IfOperStatusUp && item->FirstUnicastAddress != nullptr);
+            adapter.status = adapter.connected ? "connected" : "disconnected";
+            if (!adapter.id.empty()) out.push_back(adapter);
+        }
+    }
+    return out;
+}
+
+NetworkActionResult setAdapterEnabled(const std::string&, const std::string& adapterId, bool enabled) {
+    NetworkActionResult result;
+    result.target_id = adapterId;
+    if (adapterId.empty()) { result.status = "failed"; result.error = "missing adapter id"; return result; }
+    std::wstring testAction = getEnvWide(L"WW_TEST_WIRED_ACTION");
+    if (!testAction.empty()) {
+        std::string mode = wideToUtf8(testAction);
+        result.ok = mode == "success" || mode == adapterId;
+        result.requested = result.ok;
+        result.status = result.ok ? (enabled ? "enable_requested" : "disable_requested") : "failed";
+        result.error = result.ok ? "" : "WW_TEST_WIRED_ACTION requested failure";
+        return result;
+    }
+    std::wstring args = L"interface set interface name=" + quoteNetshName(adapterId)
+        + L" admin=" + (enabled ? L"enabled" : L"disabled");
+    DWORD directExit = 1;
+    if (runNetshDirect(args, directExit) && directExit == 0) {
+        result.ok = true; result.requested = true;
+        result.status = enabled ? "enable_requested" : "disable_requested";
+        return result;
+    }
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+    sei.lpVerb = L"runas";
+    sei.lpFile = L"netsh.exe";
+    sei.lpParameters = args.c_str();
+    sei.nShow = SW_HIDE;
+    result.ok = ShellExecuteExW(&sei) && sei.hProcess != nullptr;
+    if (result.ok) {
+        WaitForSingleObject(sei.hProcess, 30000);
+        DWORD exitCode = 0;
+        if (GetExitCodeProcess(sei.hProcess, &exitCode)) result.ok = (exitCode == 0);
+        CloseHandle(sei.hProcess);
+    }
+    result.requested = true;
+    result.elevated = result.ok;
+    result.status = result.ok ? (enabled ? "enable_requested" : "disable_requested") : "failed";
+    if (!result.ok) result.error = "netsh failed (admin required?)";
+    return result;
+}
+
 JsonValue networkStatusJson(const NetworkStatus& status) {
     return JsonValue::Object{
         {"ok", true},

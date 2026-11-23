@@ -1,550 +1,67 @@
+// ww-launch.exe — IFEO Debugger / 启动守卫
+// 系统启动受管 exe 时，先调用本程序：argv[1] = 目标 exe 全路径，其后为原始参数。
+// 命中规则 → 打开警告页并不启动目标(=拦截)；否则以“绕过 IFEO 递归”的方式启动真实程序。
 #include <winsock2.h>
 #include <windows.h>
-#include <iphlpapi.h>
 #include <shellapi.h>
 
+#include "core/config_manager.h"
+#include "core/logger.h"
+#include "core/network_manager.h"
+#include "core/rule_engine.h"
+#include "core/util.h"
 
-#include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-#include <wlanapi.h>  // type definitions only
+#include <string>
+#include <vector>
 
-// Dynamic wlanapi.dll loader - avoids GPS permission association
-static HMODULE g_wlanDll = NULL;
-typedef DWORD (WINAPI *FnWlanOpenHandle)(DWORD, PVOID*, PDWORD, PHANDLE);
-typedef DWORD (WINAPI *FnWlanCloseHandle)(HANDLE, PVOID);
-typedef DWORD (WINAPI *FnWlanEnumInterfaces)(HANDLE, PVOID, PWLAN_INTERFACE_INFO_LIST*);
-typedef VOID  (WINAPI *FnWlanFreeMemory)(PVOID);
-typedef DWORD (WINAPI *FnWlanQueryInterface)(HANDLE, const GUID*, WLAN_INTF_OPCODE, PVOID, PDWORD, PVOID*, WLAN_OPCODE_VALUE_TYPE*);
-static FnWlanOpenHandle pWlanOpenHandle = NULL;
-static FnWlanCloseHandle pWlanCloseHandle = NULL;
-static FnWlanEnumInterfaces pWlanEnumInterfaces = NULL;
-static FnWlanFreeMemory pWlanFreeMemory = NULL;
-static FnWlanQueryInterface pWlanQueryInterface = NULL;
+using namespace ww;
 
-static bool loadWlanApi() {
-    if (g_wlanDll) return true;
-    g_wlanDll = LoadLibraryW(L"wlanapi.dll");
-    if (!g_wlanDll) return false;
-    pWlanOpenHandle = (FnWlanOpenHandle)GetProcAddress(g_wlanDll, "WlanOpenHandle");
-    pWlanCloseHandle = (FnWlanCloseHandle)GetProcAddress(g_wlanDll, "WlanCloseHandle");
-    pWlanEnumInterfaces = (FnWlanEnumInterfaces)GetProcAddress(g_wlanDll, "WlanEnumInterfaces");
-    pWlanFreeMemory = (FnWlanFreeMemory)GetProcAddress(g_wlanDll, "WlanFreeMemory");
-    pWlanQueryInterface = (FnWlanQueryInterface)GetProcAddress(g_wlanDll, "WlanQueryInterface");
-    if (!pWlanOpenHandle || !pWlanCloseHandle || !pWlanEnumInterfaces || !pWlanFreeMemory || !pWlanQueryInterface) {
-        FreeLibrary(g_wlanDll);
-        g_wlanDll = NULL;
-        return false;
-    }
-    return true;
+namespace {
+
+typedef LONG (NTAPI* FnNtQueryInformationProcess)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+typedef LONG (NTAPI* FnNtRemoveProcessDebug)(HANDLE, HANDLE);
+
+std::wstring g_exeDir;
+
+std::wstring pathBaseNameWide(const std::wstring& path) {
+    const wchar_t* slash = wcsrchr(path.c_str(), L'\\');
+    if (!slash) slash = wcsrchr(path.c_str(), L'/');
+    return slash ? std::wstring(slash + 1) : path;
 }
 
-static char* dupRange(const char* begin, size_t len) {
-    char* out = static_cast<char*>(malloc(len + 1));
-    if (!out) return nullptr;
-    if (len) memcpy(out, begin, len);
-    out[len] = 0;
-    return out;
-}
-
-static void freeStr(char* value) {
-    if (value) free(value);
-}
-
-static char* wideToUtf8(const wchar_t* value) {
-    if (!value || !*value) return dupRange("", 0);
-    int needed = WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
-    if (needed <= 0) return dupRange("", 0);
-    char* out = static_cast<char*>(malloc(static_cast<size_t>(needed)));
-    if (!out) return nullptr;
-    WideCharToMultiByte(CP_UTF8, 0, value, -1, out, needed, nullptr, nullptr);
-    return out;
-}
-
-static wchar_t* utf8ToWide(const char* value) {
-    if (!value || !*value) {
-        wchar_t* out = static_cast<wchar_t*>(malloc(sizeof(wchar_t)));
-        if (out) out[0] = 0;
-        return out;
-    }
-    int needed = MultiByteToWideChar(CP_UTF8, 0, value, -1, nullptr, 0);
-    if (needed <= 0) return nullptr;
-    wchar_t* out = static_cast<wchar_t*>(malloc(sizeof(wchar_t) * static_cast<size_t>(needed)));
-    if (!out) return nullptr;
-    MultiByteToWideChar(CP_UTF8, 0, value, -1, out, needed);
-    return out;
-}
-
-static char* argValue(int argc, wchar_t** argv, const wchar_t* name) {
-    for (int i = 1; i + 1 < argc; ++i) {
-        if (wcscmp(argv[i], name) == 0) return wideToUtf8(argv[i + 1]);
-    }
-    return dupRange("", 0);
-}
-
-static bool hasArg(int argc, wchar_t** argv, const wchar_t* name) {
-    for (int i = 1; i < argc; ++i) {
-        if (wcscmp(argv[i], name) == 0) return true;
+bool isProtectedTarget(const std::wstring& target) {
+    std::string base = toLowerAscii(wideToUtf8(pathBaseNameWide(target)));
+    static const char* list[] = {"ww-launch.exe", "ww-admin.exe", "wifi-warning.exe", "ww-smoke.exe",
+                                 "csrss.exe", "wininit.exe", "winlogon.exe", "services.exe", "lsass.exe",
+                                 "svchost.exe", "smss.exe", "explorer.exe"};
+    for (const char* item : list) {
+        if (base == item) return true;
     }
     return false;
 }
 
-static wchar_t* envWide(const wchar_t* name) {
-    DWORD needed = GetEnvironmentVariableW(name, nullptr, 0);
-    if (!needed) return nullptr;
-    wchar_t* out = static_cast<wchar_t*>(malloc(sizeof(wchar_t) * needed));
-    if (!out) return nullptr;
-    DWORD written = GetEnvironmentVariableW(name, out, needed);
-    if (written >= needed) out[needed - 1] = 0;
-    return out;
-}
-
-static wchar_t* joinWide3(const wchar_t* a, const wchar_t* b, const wchar_t* c) {
-    size_t la = wcslen(a);
-    size_t lb = wcslen(b);
-    size_t lc = wcslen(c);
-    wchar_t* out = static_cast<wchar_t*>(malloc(sizeof(wchar_t) * (la + lb + lc + 1)));
-    if (!out) return nullptr;
-    memcpy(out, a, sizeof(wchar_t) * la);
-    memcpy(out + la, b, sizeof(wchar_t) * lb);
-    memcpy(out + la + lb, c, sizeof(wchar_t) * lc);
-    out[la + lb + lc] = 0;
-    return out;
-}
-
-static wchar_t* defaultConfigPath() {
-    // v1.9: config.json lives next to the executable
-    wchar_t exePath[MAX_PATH];
-    DWORD size = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    if (size == 0 || size >= MAX_PATH) { wchar_t* d = (wchar_t*)malloc(4); if(d){d[0]=L'.';d[1]=0;} return d; }
-    wchar_t* lastSlash = wcsrchr(exePath, L'\\');
-    if (!lastSlash) lastSlash = wcsrchr(exePath, L'/');
-    if (lastSlash) *lastSlash = 0;
-    return joinWide3(exePath, L"\\config.json", L"");
-}
-
-static char* readUtf8File(const wchar_t* path) {
-    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE) return dupRange("", 0);
-    LARGE_INTEGER size{};
-    if (!GetFileSizeEx(file, &size) || size.QuadPart <= 0 || size.QuadPart > 8 * 1024 * 1024) {
-        CloseHandle(file);
-        return dupRange("", 0);
-    }
-    char* data = static_cast<char*>(malloc(static_cast<size_t>(size.QuadPart) + 1));
-    if (!data) {
-        CloseHandle(file);
-        return dupRange("", 0);
-    }
-    DWORD read = 0;
-    ReadFile(file, data, static_cast<DWORD>(size.QuadPart), &read, nullptr);
-    data[read] = 0;
-    CloseHandle(file);
-    return data;
-}
-
-static bool isEscaped(const char* text, size_t pos) {
-    size_t count = 0;
-    while (pos > 0 && text[--pos] == '\\') ++count;
-    return (count % 2) == 1;
-}
-
-static size_t findStringEnd(const char* text, size_t len, size_t quote) {
-    for (size_t i = quote + 1; i < len; ++i) {
-        if (text[i] == '"' && !isEscaped(text, i)) return i;
-    }
-    return SIZE_MAX;
-}
-
-static size_t findMatching(const char* text, size_t len, size_t open, char close) {
-    char start = text[open];
-    int depth = 0;
-    for (size_t i = open; i < len; ++i) {
-        if (text[i] == '"') {
-            size_t end = findStringEnd(text, len, i);
-            if (end == SIZE_MAX) return SIZE_MAX;
-            i = end;
-            continue;
-        }
-        if (text[i] == start) ++depth;
-        if (text[i] == close && --depth == 0) return i;
-    }
-    return SIZE_MAX;
-}
-
-static const char* findNeedleBounded(const char* text, const char* needle, size_t begin, size_t end) {
-    size_t needleLen = strlen(needle);
-    if (needleLen == 0 || end < begin || end - begin < needleLen) return nullptr;
-    for (size_t i = begin; i + needleLen <= end; ++i) {
-        if (memcmp(text + i, needle, needleLen) == 0) return text + i;
-    }
-    return nullptr;
-}
-
-static size_t valueStart(const char* text, size_t len, const char* key, size_t begin, size_t end) {
-    if (end > len) end = len;
-    char needle[128];
-    snprintf(needle, sizeof(needle), "\"%s\"", key);
-    const char* found = findNeedleBounded(text, needle, begin, end);
-    while (found) {
-        size_t pos = static_cast<size_t>(found - text);
-        const char* colon = static_cast<const char*>(memchr(text + pos + strlen(needle), ':', end - pos - strlen(needle)));
-        if (!colon) return SIZE_MAX;
-        size_t value = static_cast<size_t>(colon - text) + 1;
-        while (value < end && (text[value] == ' ' || text[value] == '\t' || text[value] == '\r' || text[value] == '\n')) ++value;
-        if (value < end) return value;
-        found = findNeedleBounded(text, needle, pos + strlen(needle), end);
-    }
-    return SIZE_MAX;
-}
-
-static char* jsonStringAt(const char* text, size_t len, size_t quote) {
-    if (quote == SIZE_MAX || quote >= len || text[quote] != '"') return dupRange("", 0);
-    size_t end = findStringEnd(text, len, quote);
-    if (end == SIZE_MAX) return dupRange("", 0);
-    char* out = static_cast<char*>(malloc(end - quote + 1));
-    if (!out) return nullptr;
-    size_t j = 0;
-    for (size_t i = quote + 1; i < end; ++i) {
-        if (text[i] == '\\' && i + 1 < end) {
-            char e = text[++i];
-            if (e == 'n') out[j++] = '\n';
-            else if (e == 'r') out[j++] = '\r';
-            else if (e == 't') out[j++] = '\t';
-            else out[j++] = e;
-        } else {
-            out[j++] = text[i];
-        }
-    }
-    out[j] = 0;
-    return out;
-}
-
-static char* jsonString(const char* text, size_t len, const char* key, size_t begin, size_t end) {
-    return jsonStringAt(text, len, valueStart(text, len, key, begin, end));
-}
-
-static bool jsonBool(const char* text, size_t len, const char* key, bool fallback) {
-    size_t value = valueStart(text, len, key, 0, len);
-    if (value == SIZE_MAX) return fallback;
-    if (strncmp(text + value, "true", 4) == 0) return true;
-    if (strncmp(text + value, "false", 5) == 0) return false;
-    return fallback;
-}
-
-static int jsonInt(const char* text, size_t len, const char* key, int fallback) {
-    size_t value = valueStart(text, len, key, 0, len);
-    if (value == SIZE_MAX) return fallback;
-    return atoi(text + value);
-}
-
-static bool hasActiveBypass(const char* config, size_t len) {
-    size_t pos = valueStart(config, len, "bypass_until_epoch", 0, len);
-    if (pos == SIZE_MAX) return false;
-    long long bypassUntil = atoll(config + pos);
-    if (bypassUntil <= 0) return false;
-    time_t now = time(nullptr);
-    return now < (time_t)bypassUntil;
-}
-
-static bool arrayBounds(const char* text, size_t len, const char* key, size_t begin, size_t end, size_t* outBegin, size_t* outEnd) {
-    size_t value = valueStart(text, len, key, begin, end);
-    if (value == SIZE_MAX || value >= len || text[value] != '[') return false;
-    size_t close = findMatching(text, len, value, ']');
-    if (close == SIZE_MAX) return false;
-    *outBegin = value;
-    *outEnd = close;
-    return true;
-}
-
-static char* lowerCopy(const char* value) {
-    size_t len = strlen(value);
-    char* out = dupRange(value, len);
-    if (!out) return nullptr;
-    for (size_t i = 0; i < len; ++i) out[i] = static_cast<char>(tolower(static_cast<unsigned char>(out[i])));
-    return out;
-}
-
-static char* currentSsid() {
-    wchar_t* testSsid = envWide(L"WW_TEST_CURRENT_SSID");
-    if (testSsid && testSsid[0]) {
-        bool disconnected = wcscmp(testSsid, L"<no-adapter>") == 0 || wcscmp(testSsid, L"<disconnected>") == 0;
-        char* out = disconnected ? dupRange("", 0) : wideToUtf8(testSsid);
-        free(testSsid);
-        return out;
-    }
-    free(testSsid);
-
-    HANDLE handle = nullptr;
-    DWORD negotiated = 0;
-    if (!loadWlanApi() || pWlanOpenHandle(2, nullptr, &negotiated, &handle) != ERROR_SUCCESS) return dupRange("", 0);
-    PWLAN_INTERFACE_INFO_LIST interfaces = nullptr;
-    if (pWlanEnumInterfaces(handle, nullptr, &interfaces) != ERROR_SUCCESS || !interfaces) {
-        pWlanCloseHandle(handle, nullptr);
-        return dupRange("", 0);
-    }
-    char* ssid = dupRange("", 0);
-    for (DWORD i = 0; i < interfaces->dwNumberOfItems && (!ssid || !ssid[0]); ++i) {
-        if (interfaces->InterfaceInfo[i].isState != wlan_interface_state_connected) continue;
-        DWORD size = 0;
-        PWLAN_CONNECTION_ATTRIBUTES attrs = nullptr;
-        WLAN_OPCODE_VALUE_TYPE opcode{};
-        if (pWlanQueryInterface(handle, &interfaces->InterfaceInfo[i].InterfaceGuid, wlan_intf_opcode_current_connection, nullptr, &size, reinterpret_cast<PVOID*>(&attrs), &opcode) == ERROR_SUCCESS && attrs) {
-            freeStr(ssid);
-            DOT11_SSID dot11 = attrs->wlanAssociationAttributes.dot11Ssid;
-            ssid = dupRange(reinterpret_cast<const char*>(dot11.ucSSID), dot11.uSSIDLength);
-            pWlanFreeMemory(attrs);
-        }
-    }
-    pWlanFreeMemory(interfaces);
-    pWlanCloseHandle(handle, nullptr);
-    return ssid;
-}
-
-struct CurrentNetwork {
-    char* type;
-    char* id;
-};
-
-static void freeNetwork(CurrentNetwork* network) {
-    if (!network) return;
-    freeStr(network->type);
-    freeStr(network->id);
-    network->type = nullptr;
-    network->id = nullptr;
-}
-
-
-static CurrentNetwork* getAllActiveNetworks(int* outCount) {
-    CurrentNetwork* networks = static_cast<CurrentNetwork*>(malloc(sizeof(CurrentNetwork) * 32));
-    if (!networks) return nullptr;
-    int count = 0;
-
-    wchar_t* testType = envWide(L"WW_TEST_CURRENT_NETWORK_TYPE");
-    wchar_t* testId = envWide(L"WW_TEST_CURRENT_NETWORK_ID");
-    if ((testType && testType[0]) || (testId && testId[0])) {
-        if (testId && testId[0] && wcscmp(testId, L"<no-adapter>") != 0 && wcscmp(testId, L"<disconnected>") != 0) {
-            networks[count].type = (testType && testType[0]) ? wideToUtf8(testType) : dupRange("wired", 5);
-            networks[count].id = wideToUtf8(testId);
-            ++count;
-        }
-        free(testType); free(testId);
-        *outCount = count;
-        return networks;
-    }
-    free(testType); free(testId);
-
-    char* ssid = currentSsid();
-    if (ssid && ssid[0]) {
-        networks[count].type = dupRange("wifi", 4);
-        networks[count].id = ssid;
-        ++count;
+// 返回命令行中跳过第一个 token（可带引号）之后的剩余部分。
+std::wstring skipFirstToken(const wchar_t* cmd) {
+    if (!cmd) return L"";
+    const wchar_t* p = cmd;
+    while (*p == L' ' || *p == L'\t') ++p;
+    if (*p == L'"') {
+        ++p;
+        while (*p && *p != L'"') ++p;
+        if (*p == L'"') ++p;
     } else {
-        freeStr(ssid);
+        while (*p && *p != L' ' && *p != L'\t') ++p;
     }
-
-    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
-    ULONG size = 16 * 1024;
-    IP_ADAPTER_ADDRESSES* addresses = static_cast<IP_ADAPTER_ADDRESSES*>(malloc(size));
-    if (!addresses) { *outCount = count; return networks; }
-    ULONG result = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, addresses, &size);
-    if (result == ERROR_BUFFER_OVERFLOW) {
-        free(addresses);
-        addresses = static_cast<IP_ADAPTER_ADDRESSES*>(malloc(size));
-        result = addresses ? GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, addresses, &size) : ERROR_NOT_ENOUGH_MEMORY;
-    }
-    if (result == NO_ERROR) {
-        for (IP_ADAPTER_ADDRESSES* item = addresses; item; item = item->Next) {
-            if (item->IfType != IF_TYPE_ETHERNET_CSMACD) continue;
-            if (item->OperStatus != IfOperStatusUp || !item->FirstUnicastAddress) continue;
-            if (count < 32) {
-                networks[count].type = dupRange("wired", 5);
-                networks[count].id = item->FriendlyName ? wideToUtf8(item->FriendlyName) : dupRange(item->AdapterName ? item->AdapterName : "", strlen(item->AdapterName ? item->AdapterName : ""));
-                ++count;
-            }
-        }
-    }
-    free(addresses);
-    *outCount = count;
-    return networks;
+    while (*p == L' ' || *p == L'\t') ++p;
+    return std::wstring(p);
 }
 
-static void freeAllNetworks(CurrentNetwork* networks, int count) {
-    if (!networks) return;
-    for (int i = 0; i < count; ++i) freeNetwork(&networks[i]);
-    free(networks);
-}
-
-static CurrentNetwork currentNetwork() __attribute__((unused));
-static CurrentNetwork currentNetwork() {
-    CurrentNetwork network{};
-    wchar_t* testType = envWide(L"WW_TEST_CURRENT_NETWORK_TYPE");
-    wchar_t* testId = envWide(L"WW_TEST_CURRENT_NETWORK_ID");
-    if ((testType && testType[0]) || (testId && testId[0])) {
-        network.type = (testType && testType[0]) ? wideToUtf8(testType) : dupRange("wired", 5);
-        bool disconnected = !testId || !testId[0] || wcscmp(testId, L"<no-adapter>") == 0 || wcscmp(testId, L"<disconnected>") == 0;
-        network.id = disconnected ? dupRange("", 0) : wideToUtf8(testId);
-        free(testType);
-        free(testId);
-        return network;
-    }
-    free(testType);
-    free(testId);
-
-    char* ssid = currentSsid();
-    if (ssid && ssid[0]) {
-        network.type = dupRange("wifi", 4);
-        network.id = ssid;
-        return network;
-    }
-    freeStr(ssid);
-
-    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
-    ULONG size = 16 * 1024;
-    IP_ADAPTER_ADDRESSES* addresses = static_cast<IP_ADAPTER_ADDRESSES*>(malloc(size));
-    if (!addresses) {
-        network.type = dupRange("", 0);
-        network.id = dupRange("", 0);
-        return network;
-    }
-    ULONG result = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, addresses, &size);
-    if (result == ERROR_BUFFER_OVERFLOW) {
-        free(addresses);
-        addresses = static_cast<IP_ADAPTER_ADDRESSES*>(malloc(size));
-        result = addresses ? GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, addresses, &size) : ERROR_NOT_ENOUGH_MEMORY;
-    }
-    if (result == NO_ERROR) {
-        for (IP_ADAPTER_ADDRESSES* item = addresses; item; item = item->Next) {
-            if (item->IfType != IF_TYPE_ETHERNET_CSMACD) continue;
-            if (item->OperStatus != IfOperStatusUp || !item->FirstUnicastAddress) continue;
-            network.type = dupRange("wired", 5);
-            network.id = item->FriendlyName ? wideToUtf8(item->FriendlyName) : dupRange(item->AdapterName ? item->AdapterName : "", strlen(item->AdapterName ? item->AdapterName : ""));
-            break;
-        }
-    }
-    free(addresses);
-    if (!network.type) network.type = dupRange("", 0);
-    if (!network.id) network.id = dupRange("", 0);
-    return network;
-}
-
-struct Match {
-    char* ruleId;
-    char* appName;
-};
-
-static bool ruleBlocks(const char* config, size_t len, const char* networkType, const char* networkId, const char* appPath, const char* requestedRule, Match* match) {
-    size_t rulesBegin = 0;
-    size_t rulesEnd = 0;
-    if (!arrayBounds(config, len, "rules", 0, len, &rulesBegin, &rulesEnd)) return false;
-
-    char* appLower = lowerCopy(appPath);
-    bool found = false;
-    size_t pos = rulesBegin + 1;
-    while (!found && pos < rulesEnd) {
-        const char* object = static_cast<const char*>(memchr(config + pos, '{', rulesEnd - pos));
-        if (!object) break;
-        size_t objectBegin = static_cast<size_t>(object - config);
-        size_t objectEnd = findMatching(config, len, objectBegin, '}');
-        if (objectEnd == SIZE_MAX || objectEnd > rulesEnd) break;
-
-        char* ruleId = jsonString(config, len, "id", objectBegin, objectEnd);
-        char* ruleSsid = jsonString(config, len, "ssid", objectBegin, objectEnd);
-        char* ruleNetworkType = jsonString(config, len, "network_type", objectBegin, objectEnd);
-        char* ruleNetworkId = jsonString(config, len, "network_id", objectBegin, objectEnd);
-        if (!ruleNetworkType || !ruleNetworkType[0]) {
-            freeStr(ruleNetworkType);
-            ruleNetworkType = dupRange("wifi", 4);
-        }
-        if (!ruleNetworkId || !ruleNetworkId[0]) {
-            freeStr(ruleNetworkId);
-            ruleNetworkId = dupRange(ruleSsid, strlen(ruleSsid));
-        }
-        // When --rule is provided, verify that this rule contains the same app (so we
-        // know the shortcut belongs to some rule), then match network freely.
-        // This fixes the bug where multiple rules replace the same shortcut: only
-        // the last --rule survives, but we still want to block on ANY matching network.
-        bool appBelongsToSomeRule = (!requestedRule || !requestedRule[0]);
-        if (!appBelongsToSomeRule) {
-            // Check if this rule's blocked_apps contains the requested app
-            size_t checkBegin = 0, checkEnd = 0;
-            if (arrayBounds(config, len, "blocked_apps", objectBegin, objectEnd, &checkBegin, &checkEnd)) {
-                size_t cp = checkBegin + 1;
-                while (!appBelongsToSomeRule && cp < checkEnd) {
-                    const char* co = static_cast<const char*>(memchr(config + cp, '{', checkEnd - cp));
-                    if (!co) break;
-                    size_t cb = static_cast<size_t>(co - config);
-                    size_t ce = findMatching(config, len, cb, '}');
-                    if (ce == SIZE_MAX || ce > checkEnd) break;
-                    char* checkPath = jsonString(config, len, "original_path", cb, ce);
-                    char* checkLower = lowerCopy(checkPath);
-                    if (checkLower && appLower && strcmp(checkLower, appLower) == 0) {
-                        appBelongsToSomeRule = true;
-                    }
-                    freeStr(checkPath);
-                    freeStr(checkLower);
-                    cp = ce + 1;
-                }
-            }
-        }
-        bool ruleMatches = appBelongsToSomeRule
-            && strcmp(ruleNetworkType, networkType) == 0
-            && strcmp(ruleNetworkId, networkId) == 0;
-        if (ruleMatches) {
-            size_t appsBegin = 0;
-            size_t appsEnd = 0;
-            if (arrayBounds(config, len, "blocked_apps", objectBegin, objectEnd, &appsBegin, &appsEnd)) {
-                size_t appPos = appsBegin + 1;
-                while (!found && appPos < appsEnd) {
-                    const char* appObject = static_cast<const char*>(memchr(config + appPos, '{', appsEnd - appPos));
-                    if (!appObject) break;
-                    size_t appBegin = static_cast<size_t>(appObject - config);
-                    size_t appEnd = findMatching(config, len, appBegin, '}');
-                    if (appEnd == SIZE_MAX || appEnd > appsEnd) break;
-                    char* original = jsonString(config, len, "original_path", appBegin, appEnd);
-                    char* originalLower = lowerCopy(original);
-                    if (originalLower && appLower && strcmp(originalLower, appLower) == 0) {
-                        match->ruleId = dupRange(ruleId, strlen(ruleId));
-                        match->appName = jsonString(config, len, "name", appBegin, appEnd);
-                        found = true;
-                    }
-                    freeStr(original);
-                    freeStr(originalLower);
-                    appPos = appEnd + 1;
-                }
-            }
-        }
-        freeStr(ruleId);
-        freeStr(ruleSsid);
-        freeStr(ruleNetworkType);
-        freeStr(ruleNetworkId);
-        pos = objectEnd + 1;
-    }
-    freeStr(appLower);
-    return found;
-}
-
-
-static bool ruleBlocksAnyNetwork(const char* config, size_t len, CurrentNetwork* networks, int networkCount, const char* appPath, const char* requestedRule, Match* match) {
-    for (int i = 0; i < networkCount; ++i) {
-        if (ruleBlocks(config, len, networks[i].type, networks[i].id, appPath, requestedRule, match)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool httpAlive(int port) {
+bool httpAlive(int port) {
     WSADATA data{};
     if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return false;
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock == INVALID_SOCKET) {
-        WSACleanup();
-        return false;
-    }
-    DWORD timeout = 120;
+    if (sock == INVALID_SOCKET) { WSACleanup(); return false; }
+    DWORD timeout = 150;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
     sockaddr_in addr{};
@@ -557,351 +74,329 @@ static bool httpAlive(int port) {
     return ok;
 }
 
-static bool shellOpenWithArgs(const char* target, const char* arguments) {
-    if (GetEnvironmentVariableW(L"WW_TEST_SHELLOPEN_FAIL", nullptr, 0) > 0) return false;
-    wchar_t* wide = utf8ToWide(target);
-    if (!wide) return false;
-    wchar_t* wideArgs = (arguments && arguments[0]) ? utf8ToWide(arguments) : nullptr;
-    HINSTANCE result = ShellExecuteW(nullptr, L"open", wide, wideArgs, nullptr, SW_SHOWNORMAL);
-    free(wideArgs);
-    free(wide);
-    return reinterpret_cast<intptr_t>(result) > 32;
-}
-
-static bool shellOpen(const char* target) {
-    return shellOpenWithArgs(target, "");
-}
-
-static void writeFallbackMarker(const char* reason) {
-    wchar_t* marker = envWide(L"WW_TEST_FALLBACK_FILE");
-    if (!marker || !marker[0]) {
-        free(marker);
-        return;
+bool minimalDebugLoop(DWORD pid) {
+    DEBUG_EVENT event{};
+    while (WaitForDebugEvent(&event, INFINITE)) {
+        DWORD continueStatus = DBG_CONTINUE;
+        if (event.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT) {
+            ContinueDebugEvent(event.dwProcessId, event.dwThreadId, continueStatus);
+            return true;
+        }
+        ContinueDebugEvent(event.dwProcessId, event.dwThreadId, continueStatus);
     }
-    HANDLE file = CreateFileW(marker, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    free(marker);
-    if (file == INVALID_HANDLE_VALUE) return;
-    DWORD written = 0;
-    WriteFile(file, reason, static_cast<DWORD>(strlen(reason)), &written, nullptr);
-    CloseHandle(file);
+    return false;
 }
 
-static void showFallbackWarning(bool serviceAlive) {
-    writeFallbackMarker(serviceAlive ? "browser_open_failed" : "service_unavailable");
-    if (GetEnvironmentVariableW(L"WW_TEST_NO_MESSAGEBOX", nullptr, 0) > 0) return;
-    MessageBoxW(
-        nullptr,
-        serviceAlive
-            ? L"WiFi 提醒无法打开浏览器警告页，应用将被允许启动。"
-            : L"WiFi 提醒服务未运行，应用将被允许启动。",
-        L"WiFi 提醒",
-        MB_OK | MB_ICONWARNING);
+void detachDebugger(HANDLE process, DWORD pid) {
+    // 优先使用内核级分离（文档推荐），其次 DebugActiveProcessStop，最后兜底事件泵。
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    auto query = reinterpret_cast<FnNtQueryInformationProcess>(
+        ntdll ? GetProcAddress(ntdll, "NtQueryInformationProcess") : nullptr);
+    auto removeDebug = reinterpret_cast<FnNtRemoveProcessDebug>(
+        ntdll ? GetProcAddress(ntdll, "NtRemoveProcessDebug") : nullptr);
+    if (query && removeDebug) {
+        HANDLE debugObject = nullptr;
+        LONG status = query(process, 30 /*ProcessDebugObjectHandle*/, &debugObject, sizeof(debugObject), nullptr);
+        if (status >= 0 && debugObject && removeDebug(process, debugObject) >= 0) return;
+    }
+    // 分离前先消费初始调试事件，避免子进程停在初始断点或长期挂起。
+    DEBUG_EVENT event{};
+    if (WaitForDebugEvent(&event, 2000)) {
+        ContinueDebugEvent(event.dwProcessId, event.dwThreadId, DBG_CONTINUE);
+    }
+    if (DebugActiveProcessStop(pid)) return;
+    minimalDebugLoop(pid);
 }
 
-static void writeStdout(const char* text) {
-    DWORD written = 0;
-    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (out == INVALID_HANDLE_VALUE || out == nullptr) return;
-    WriteFile(out, text, static_cast<DWORD>(strlen(text)), &written, nullptr);
+// 以“不触发 IFEO 递归”的方式启动真实程序：通过同卷硬链接改变镜像文件名，
+// 既不会再次命中 IFEO 键，也不用调试器方式运行（避免反作弊/反调试冲突与递归死循环）。
+static std::wstring dirNameOf(const std::wstring& path) {
+    auto pos = path.find_last_of(L"\\/");
+    return pos == std::wstring::npos ? std::wstring() : path.substr(0, pos);
 }
 
-static const char* baseName(const char* path) {
-    const char* slash1 = strrchr(path, '\\');
-    const char* slash2 = strrchr(path, '/');
-    const char* slash = slash1 > slash2 ? slash1 : slash2;
-    return slash ? slash + 1 : path;
+static bool sameVolume(const std::wstring& a, const std::wstring& b) {
+    wchar_t va[MAX_PATH] = {0}, vb[MAX_PATH] = {0};
+    if (!GetVolumePathNameW(a.c_str(), va, MAX_PATH)) return false;
+    if (!GetVolumePathNameW(b.c_str(), vb, MAX_PATH)) return false;
+    return _wcsicmp(va, vb) == 0;
 }
 
-static void appendJsonEscaped(char* out, size_t cap, size_t* used, const char* value) {
-    for (const char* p = value; *p && *used + 2 < cap; ++p) {
-        if (*p == '"' || *p == '\\') {
-            out[(*used)++] = '\\';
-            out[(*used)++] = *p;
-        } else if (*p == '\n') {
-            out[(*used)++] = '\\';
-            out[(*used)++] = 'n';
-        } else {
-            out[(*used)++] = *p;
+int launchReal(const std::wstring& target, const std::wstring& argsOnly) {
+    const int kLinkFail = -123456789;
+    std::wstring commandLine = L"\"" + target + L"\"";
+    if (!argsOnly.empty()) commandLine += L" " + argsOnly;
+    static unsigned s_seq = 0;
+    auto nextName = [&](const std::wstring& dir, const wchar_t* prefix) -> std::wstring {
+        wchar_t p[MAX_PATH];
+        swprintf(p, MAX_PATH, L"%s\\%s-%08X.exe", dir.c_str(), prefix,
+                 static_cast<unsigned>(GetTickCount64() ^ GetCurrentProcessId() ^ (++s_seq)));
+        return std::wstring(p);
+    };
+    auto runImage = [&](const std::wstring& imagePath, const std::wstring& workDir, bool removeAfter) -> int {
+        const wchar_t* wd = workDir.empty() ? nullptr : workDir.c_str();
+        std::vector<wchar_t> buf(commandLine.begin(), commandLine.end());
+        buf.push_back(0);
+        STARTUPINFOW si{}; si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+        BOOL ok = CreateProcessW(imagePath.c_str(), buf.data(), nullptr, nullptr, TRUE,
+                                 CREATE_UNICODE_ENVIRONMENT, nullptr, wd, &si, &pi);
+        if (!ok) {
+            DWORD err = GetLastError();
+            if (err == ERROR_ELEVATION_REQUIRED) {
+                SHELLEXECUTEINFOW sei{}; sei.cbSize = sizeof(sei); sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+                sei.lpVerb = L"runas"; sei.lpFile = imagePath.c_str();
+                sei.lpParameters = argsOnly.empty() ? nullptr : argsOnly.c_str();
+                sei.lpDirectory = wd; sei.nShow = SW_SHOWNORMAL;
+                int code = 1;
+                if (ShellExecuteExW(&sei)) {
+                    if (sei.hProcess) { WaitForSingleObject(sei.hProcess, INFINITE); DWORD ec = 0; GetExitCodeProcess(sei.hProcess, &ec); CloseHandle(sei.hProcess); code = (int)ec; } else code = 0;
+                }
+                if (removeAfter) DeleteFileW(imagePath.c_str());
+                return code;
+            }
+            if (removeAfter) DeleteFileW(imagePath.c_str());
+            return kLinkFail;
+        }
+        CloseHandle(pi.hThread);
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        DWORD ec = 0; GetExitCodeProcess(pi.hProcess, &ec);
+        CloseHandle(pi.hProcess);
+        if (removeAfter) DeleteFileW(imagePath.c_str());
+        return static_cast<int>(ec);
+    };
+    // 1) 同目录硬链接（镜像、资源、工作目录都一致）
+    {
+        std::wstring dir = dirNameOf(target);
+        if (!dir.empty()) {
+            std::wstring link = nextName(dir, L".wwg");
+            if (CreateHardLinkW(link.c_str(), target.c_str(), nullptr)) return runImage(link, dir, true);
         }
     }
-    out[*used] = 0;
-}
-
-static void appendText(char* out, size_t cap, size_t* used, const char* value) {
-    while (*value && *used + 1 < cap) out[(*used)++] = *value++;
-    out[*used] = 0;
-}
-
-static void timestamp(char* out, size_t cap, bool dateOnly) {
-    SYSTEMTIME t{};
-    GetLocalTime(&t);
-    if (dateOnly) snprintf(out, cap, "%04u-%02u-%02u", t.wYear, t.wMonth, t.wDay);
-    else snprintf(out, cap, "%04u-%02u-%02uT%02u:%02u:%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
-}
-
-static void logBlocked(const char* networkId, const char* app, const char* ruleId) {
-    // v1.9: logs stored next to the executable
-    wchar_t exePath[MAX_PATH];
-    DWORD exeSize = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    if (exeSize == 0 || exeSize >= MAX_PATH) return;
-    wchar_t* lastSlash = wcsrchr(exePath, L'\\');
-    if (!lastSlash) lastSlash = wcsrchr(exePath, L'/');
-    if (lastSlash) *lastSlash = 0;
-    wchar_t* logs = joinWide3(exePath, L"\\logs", L"");
-    CreateDirectoryW(logs, nullptr);
-    char day[16]{};
-    timestamp(day, sizeof(day), true);
-    wchar_t* dayWide = utf8ToWide(day);
-    wchar_t* file = joinWide3(logs, L"\\", dayWide);
-    wchar_t* fileJsonl = joinWide3(file, L".jsonl", L"");
-    free(logs);
-    free(dayWide);
-    free(file);
-    if (!fileJsonl) return;
-
-    HANDLE handle = CreateFileW(fileJsonl, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    free(fileJsonl);
-    if (handle == INVALID_HANDLE_VALUE) return;
-
-    char now[32]{};
-    timestamp(now, sizeof(now), false);
-    char line[2048]{};
-    size_t used = 0;
-    appendText(line, sizeof(line), &used, "{\"action\":\"blocked\",\"app\":\"");
-    appendJsonEscaped(line, sizeof(line), &used, baseName(app));
-    appendText(line, sizeof(line), &used, "\",\"rule_id\":\"");
-    appendJsonEscaped(line, sizeof(line), &used, ruleId);
-    appendText(line, sizeof(line), &used, "\",\"ssid\":\"");
-    appendJsonEscaped(line, sizeof(line), &used, networkId);
-    appendText(line, sizeof(line), &used, "\",\"timestamp\":\"");
-    appendText(line, sizeof(line), &used, now);
-    appendText(line, sizeof(line), &used, "\"}\n");
-    DWORD written = 0;
-    WriteFile(handle, line, static_cast<DWORD>(strlen(line)), &written, nullptr);
-    CloseHandle(handle);
-}
-
-static char hexDigit(unsigned char value) {
-    return static_cast<char>(value < 10 ? '0' + value : 'A' + value - 10);
-}
-
-static char* urlEncode(const char* value) {
-    size_t len = strlen(value);
-    char* out = static_cast<char*>(malloc(len * 3 + 1));
-    if (!out) return nullptr;
-    size_t used = 0;
-    for (size_t i = 0; i < len; ++i) {
-        unsigned char c = static_cast<unsigned char>(value[i]);
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') out[used++] = static_cast<char>(c);
-        else if (c == ' ') out[used++] = '+';
-        else {
-            out[used++] = '%';
-            out[used++] = hexDigit(c >> 4);
-            out[used++] = hexDigit(c & 15);
+    // 2) 同卷临时目录硬链接
+    {
+        wchar_t tmp[MAX_PATH]; DWORD n = GetTempPathW(MAX_PATH, tmp);
+        if (n > 0) {
+            std::wstring tmpDir(tmp);
+            if (!tmpDir.empty() && tmpDir.back() != L'\\') tmpDir += L'\\';
+            if (sameVolume(tmpDir, target)) {
+                std::wstring link = nextName(tmpDir, L"wwg");
+                if (CreateHardLinkW(link.c_str(), target.c_str(), nullptr)) return runImage(link, dirNameOf(target), true);
+            }
         }
     }
-    out[used] = 0;
-    return out;
-}
-
-static char* makeWarningUrl(int port, const char* appPath, const char* appName, const char* appArgs, const char* networkType, const char* networkId, const char* ruleId) {
-    char* eApp = urlEncode(appPath);
-    char* eName = urlEncode(appName);
-    char* eArgs = urlEncode(appArgs ? appArgs : "");
-    char* eType = urlEncode(networkType);
-    char* eSsid = urlEncode(networkId);
-    char* eRule = urlEncode(ruleId);
-    size_t needed = strlen(eApp) + strlen(eName) + strlen(eArgs) + strlen(eType) + strlen(eSsid) + strlen(eRule) + 210;
-    char* out = static_cast<char*>(malloc(needed));
-    if (out) {
-        snprintf(out, needed, "http://localhost:%d/warning?app=%s&appName=%s&appArgs=%s&networkType=%s&ssid=%s&networkId=%s&ruleId=%s", port, eApp, eName, eArgs, eType, eSsid, eSsid, eRule);
+    // 3) 复制到可写目录启动（源卷不支持硬链接：exFAT / 网络盘 / FAT32）
+    {
+        std::wstring appDir = dirNameOf(target);
+        if (!appDir.empty()) {
+            std::wstring dst = nextName(appDir, L".wwg");
+            if (CopyFileW(target.c_str(), dst.c_str(), FALSE)) return runImage(dst, appDir, true);
+        }
+        wchar_t tmp[MAX_PATH]; DWORD n = GetTempPathW(MAX_PATH, tmp);
+        if (n > 0) {
+            std::wstring tmpDir(tmp);
+            if (!tmpDir.empty() && tmpDir.back() != L'\\') tmpDir += L'\\';
+            std::wstring dst = nextName(tmpDir, L"wwg");
+            if (CopyFileW(target.c_str(), dst.c_str(), FALSE)) return runImage(dst, appDir, true);
+        }
     }
-    freeStr(eApp);
-    freeStr(eName);
-    freeStr(eArgs);
-    freeStr(eType);
-    freeStr(eSsid);
-    freeStr(eRule);
-    return out;
+    return -1;
+}
+void logBlocked(const std::string& app, const std::string& ruleId, const std::string& networkId) {
+    Logger logger;
+    LogRecord record;
+    record.timestamp = nowIsoLocal();
+    record.action = "blocked";
+    record.app = pathBaseNameUtf8(app);
+    record.rule_id = ruleId;
+    logger.write(record);
 }
 
-static void printDryAllow(const char* reason, const char* ssid = nullptr) {
-    char out[512]{};
-    if (ssid) snprintf(out, sizeof(out), "{\"decision\":\"allow\",\"reason\":\"%s\",\"ssid\":\"%s\"}\n", reason, ssid);
-    else snprintf(out, sizeof(out), "{\"decision\":\"allow\",\"reason\":\"%s\"}\n", reason);
-    writeStdout(out);
+std::string makeWarningUrl(int port, const std::string& appPath, const std::string& appName,
+                           const std::string& argsOnly, const std::string& networkType,
+                           const std::string& networkId, const std::string& ruleId) {
+    return "http://127.0.0.1:" + std::to_string(port) + "/warning?app=" + urlEncode(appPath) +
+           "&appName=" + urlEncode(appName) + "&appArgs=" + urlEncode(argsOnly) +
+           "&networkType=" + urlEncode(networkType) + "&ssid=" + urlEncode(networkId) +
+           "&networkId=" + urlEncode(networkId) + "&ruleId=" + urlEncode(ruleId);
 }
 
-static void printDryBlock(const char* ruleId, const char* appName, const char* networkType, const char* networkId, const char* url) {
-    char out[4096]{};
-    size_t used = 0;
-    appendText(out, sizeof(out), &used, "{\"decision\":\"block\",\"reason\":\"matching_rule\",\"rule_id\":\"");
-    appendJsonEscaped(out, sizeof(out), &used, ruleId);
-    appendText(out, sizeof(out), &used, "\",\"app\":\"");
-    appendJsonEscaped(out, sizeof(out), &used, appName);
-    appendText(out, sizeof(out), &used, "\",\"network_type\":\"");
-    appendJsonEscaped(out, sizeof(out), &used, networkType);
-    appendText(out, sizeof(out), &used, "\",\"ssid\":\"");
-    appendJsonEscaped(out, sizeof(out), &used, networkId);
-    appendText(out, sizeof(out), &used, "\",\"url\":\"");
-    appendJsonEscaped(out, sizeof(out), &used, url);
-    appendText(out, sizeof(out), &used, "\"}\n");
-    writeStdout(out);
+void showBlockedMessage(const std::wstring& appName, const std::string& networkName) {
+    std::wstring detail = L"“" + appName + L"” 在当前网络下已被 WiFi 提醒拦截。\n\n请先打开 WiFi 提醒主程序，在警告页输入密码可临时放行。";
+    MessageBoxW(nullptr, detail.c_str(), L"WiFi 提醒", MB_OK | MB_ICONWARNING);
 }
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    char* appPath = argValue(argc, argv, L"--app");
-    char* appArgs = argValue(argc, argv, L"--app-args");
-    char* ruleId = argValue(argc, argv, L"--rule");
-    if (!ruleId || !ruleId[0]) {
-        freeStr(ruleId);
-        ruleId = argValue(argc, argv, L"--rule-id");
+static std::wstring resolveAbsoluteTarget(const std::wstring& target) {
+    if (target.empty()) return target;
+    wchar_t found[MAX_PATH] = {0};
+    if (target.find_first_of(L"\\/") == std::wstring::npos) {
+        if (SearchPathW(nullptr, target.c_str(), L".exe", MAX_PATH, found, nullptr) > 0) return std::wstring(found);
     }
-    char* overrideSsid = argValue(argc, argv, L"--ssid");
-    char* overrideNetworkType = argValue(argc, argv, L"--network-type");
-    char* overrideNetworkId = argValue(argc, argv, L"--network-id");
-    char* configOverride = argValue(argc, argv, L"--config");
-    bool dryRun = hasArg(argc, argv, L"--dry-run");
-    bool noLaunch = hasArg(argc, argv, L"--no-launch");
-    LocalFree(argv);
+    wchar_t buf[MAX_PATH] = {0};
+    DWORD n = GetFullPathNameW(target.c_str(), MAX_PATH, buf, nullptr);
+    if (n > 0 && n < MAX_PATH) return std::wstring(buf);
+    return target;
+}
 
-    if (!appPath || !appPath[0]) {
-        if (dryRun) writeStdout("{\"decision\":\"error\",\"reason\":\"missing_app\"}\n");
-        else MessageBoxW(nullptr, L"缺少要启动的应用路径。", L"WiFi 提醒", MB_OK | MB_ICONERROR);
-        freeStr(appPath);
-        freeStr(appArgs);
-        freeStr(ruleId);
-        freeStr(overrideSsid);
-        freeStr(overrideNetworkType);
-        freeStr(overrideNetworkId);
-        freeStr(configOverride);
+int runGuard(std::wstring target, const std::wstring& argsOnly) {
+    target = resolveAbsoluteTarget(target);
+    auto doLaunch = [&]() -> int {
+        int r = launchReal(target, argsOnly);
+        if (r == -1) {
+            MessageBoxW(nullptr, L"无法启动：创建硬链接失败（目标磁盘与临时目录不在同一卷，或目录不可写）。请先在设置页“完全还原”后再启动。", L"WiFi 提醒", MB_OK | MB_ICONERROR);
+        }
+        return r;
+    };
+    if (target.empty()) {
+        MessageBoxW(nullptr, L"缺少要启动的程序路径。", L"WiFi 提醒", MB_OK | MB_ICONERROR);
         return 2;
     }
-
-    wchar_t* configPath = (configOverride && configOverride[0]) ? utf8ToWide(configOverride) : defaultConfigPath();
-    char* config = readUtf8File(configPath);
-    size_t configLen = config ? strlen(config) : 0;
-    free(configPath);
-
-    if (!config || !config[0] || !jsonBool(config, configLen, "protection_enabled", true)) {
-        if (!dryRun && !noLaunch) shellOpenWithArgs(appPath, appArgs);
-        if (dryRun) printDryAllow("config_or_disabled");
-        freeStr(config);
-        freeStr(appPath);
-        freeStr(appArgs);
-        freeStr(ruleId);
-        freeStr(overrideSsid);
-        freeStr(overrideNetworkType);
-        freeStr(overrideNetworkId);
-        freeStr(configOverride);
-        return 0;
+    if (isProtectedTarget(target)) {
+        return doLaunch();
     }
 
-    if (hasActiveBypass(config, configLen)) {
-        if (!dryRun && !noLaunch) shellOpenWithArgs(appPath, appArgs);
-        if (dryRun) printDryAllow("active_bypass");
-        freeStr(config);
-        freeStr(appPath);
-        freeStr(appArgs);
-        freeStr(ruleId);
-        freeStr(overrideSsid);
-        freeStr(overrideNetworkType);
-        freeStr(overrideNetworkId);
-        freeStr(configOverride);
-        return 0;
+    ConfigManager manager;
+    AppConfig config = manager.load();
+    auto loadStatus = manager.lastLoadStatus();
+
+    if (!config.settings.protection_enabled) {
+        return doLaunch();
     }
 
-    // Collect all active networks (WiFi + wired) for multi-network matching
-    int activeCount = 0;
-    CurrentNetwork* activeNetworks = nullptr;
-    if (overrideNetworkId && overrideNetworkId[0]) {
-        activeNetworks = static_cast<CurrentNetwork*>(malloc(sizeof(CurrentNetwork)));
-        activeNetworks[0].type = (overrideNetworkType && overrideNetworkType[0]) ? dupRange(overrideNetworkType, strlen(overrideNetworkType)) : dupRange("wired", 5);
-        activeNetworks[0].id = dupRange(overrideNetworkId, strlen(overrideNetworkId));
-        activeCount = 1;
-    } else if (overrideSsid && overrideSsid[0]) {
-        activeNetworks = static_cast<CurrentNetwork*>(malloc(sizeof(CurrentNetwork)));
-        activeNetworks[0].type = dupRange("wifi", 4);
-        activeNetworks[0].id = dupRange(overrideSsid, strlen(overrideSsid));
-        activeCount = 1;
-    } else {
-        activeNetworks = getAllActiveNetworks(&activeCount);
-    }
-    if (activeCount == 0) {
-        if (!dryRun && !noLaunch) shellOpenWithArgs(appPath, appArgs);
-        if (dryRun) printDryAllow("no_wifi");
-        freeAllNetworks(activeNetworks, activeCount);
-        freeStr(config);
-        freeStr(appPath);
-        freeStr(appArgs);
-        freeStr(ruleId);
-        freeStr(overrideSsid);
-        freeStr(overrideNetworkType);
-        freeStr(overrideNetworkId);
-        freeStr(configOverride);
-        return 0;
+    std::string targetUtf8 = wideToUtf8(target);
+    auto networks = getActiveNetworks();
+    auto match = findBlockingRuleForNetworks(config, networks, targetUtf8);
+    if (!match) {
+        // 未受管 / 当前网络不匹配 / 处于放行期 / 离线 → 放行
+        return doLaunch();
     }
 
-    Match match{};
-    if (!ruleBlocksAnyNetwork(config, configLen, activeNetworks, activeCount, appPath, ruleId, &match)) {
-        if (!dryRun && !noLaunch) shellOpenWithArgs(appPath, appArgs);
-        if (dryRun) printDryAllow("no_matching_rule", activeCount > 0 ? activeNetworks[0].id : "");
-        freeAllNetworks(activeNetworks, activeCount);
-        freeStr(config);
-        freeStr(appPath);
-        freeStr(appArgs);
-        freeStr(ruleId);
-        freeStr(overrideSsid);
-        freeStr(overrideNetworkType);
-        freeStr(overrideNetworkId);
-        freeStr(configOverride);
-        return 0;
+    std::string matchedType;
+    std::string matchedId;
+    for (const auto& network : networks) {
+        auto single = findBlockingRuleForNetworks(config, {network}, targetUtf8);
+        if (single) { matchedType = network.type; matchedId = network.id; break; }
     }
+    if (matchedId.empty() && !networks.empty()) { matchedType = networks.front().type; matchedId = networks.front().id; }
 
-    const char* matchedNetworkId = "";
-    const char* matchedNetworkType = "";
-    // Find which network matched
-    for (int n = 0; n < activeCount; ++n) {
-        Match tmp{};
-        if (ruleBlocks(config, configLen, activeNetworks[n].type, activeNetworks[n].id, appPath, ruleId, &tmp)) {
-            matchedNetworkId = activeNetworks[n].id;
-            matchedNetworkType = activeNetworks[n].type;
-            break;
-        }
+    logBlocked(targetUtf8, match->rule.id, matchedId);
+
+    std::string appName = match->app.name.empty() ? pathBaseNameUtf8(targetUtf8) : match->app.name;
+    int port = config.settings.http_port > 0 ? config.settings.http_port : 18765;
+    std::string url = makeWarningUrl(port, targetUtf8, appName, wideToUtf8(argsOnly), matchedType, matchedId, match->rule.id);
+
+    if (httpAlive(port)) {
+        SHELLEXECUTEINFOW sei{};
+        sei.cbSize = sizeof(sei);
+        sei.lpVerb = L"open";
+        std::wstring urlWide = utf8ToWide(url);
+        sei.lpFile = urlWide.c_str();
+        sei.nShow = SW_SHOWNORMAL;
+        if (ShellExecuteExW(&sei)) return 0;  // 已拦截
     }
-
-    if (!dryRun) logBlocked(matchedNetworkId, appPath, match.ruleId);
-    int port = jsonInt(config, configLen, "http_port", 18765);
-    if (port <= 0) port = 18765;
-
-    const char* appName = (match.appName && match.appName[0]) ? match.appName : baseName(appPath);
-    char* url = makeWarningUrl(port, appPath, appName, appArgs, matchedNetworkType, matchedNetworkId, match.ruleId);
-
-    if (dryRun) {
-        printDryBlock(match.ruleId, appName, matchedNetworkType, matchedNetworkId, url ? url : "");
-    } else if (url && httpAlive(port)) {
-        if (!shellOpen(url)) {
-            showFallbackWarning(true);
-            if (!noLaunch) shellOpenWithArgs(appPath, appArgs);
-        }
-    } else {
-        showFallbackWarning(false);
-        if (!noLaunch) shellOpenWithArgs(appPath, appArgs);
-    }
-
-    freeStr(url);
-    freeStr(match.ruleId);
-    freeStr(match.appName);
-    freeAllNetworks(activeNetworks, activeCount);
-    freeStr(config);
-    freeStr(appPath);
-    freeStr(appArgs);
-    freeStr(ruleId);
-    freeStr(overrideSsid);
-    freeStr(overrideNetworkType);
-    freeStr(overrideNetworkId);
-    freeStr(configOverride);
+    // 服务未运行 / 浏览器失败：仍然拦截（不放行），并提示用户
+    showBlockedMessage(pathBaseNameWide(target), matchedId);
     return 0;
+}
+
+int runDry(int argc, wchar_t** argv) {
+    auto value = [&](const std::wstring& key) -> std::wstring {
+        for (int i = 1; i + 1 < argc; ++i) {
+            if (std::wstring(argv[i]) == key) return argv[i + 1];
+        }
+        return L"";
+    };
+    std::wstring configPath = value(L"--config");
+    std::wstring appPath = value(L"--app");
+    std::wstring ssid = value(L"--ssid");
+    std::wstring netType = value(L"--network-type");
+    std::wstring netId = value(L"--network-id");
+    std::wstring appArgs = value(L"--app-args");
+
+    auto emit = [](const std::string& text) {
+        HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD written = 0;
+        WriteFile(out, text.data(), static_cast<DWORD>(text.size()), &written, nullptr);
+    };
+
+    ConfigManager manager(configPath);
+    AppConfig config = manager.load();
+
+    std::vector<NetworkIdentity> networks;
+    if (netId != L"<no-adapter>" && ssid != L"<no-adapter>") {
+        if (!netType.empty()) {
+            networks.push_back({wideToUtf8(netType), wideToUtf8(netId), wideToUtf8(netId)});
+        } else if (!ssid.empty()) {
+            networks.push_back({"wifi", wideToUtf8(ssid), wideToUtf8(ssid)});
+        }
+    }
+
+    std::string appUtf8 = wideToUtf8(appPath);
+    if (!config.settings.protection_enabled) {
+        emit("{\"decision\":\"allow\",\"reason\":\"config_or_disabled\"}\n");
+        return 0;
+    }
+    if (networks.empty()) {
+        emit("{\"decision\":\"allow\",\"reason\":\"no_wifi\"}\n");
+        return 0;
+    }
+    auto match = findBlockingRuleForNetworks(config, networks, appUtf8);
+    if (!match) {
+        emit("{\"decision\":\"allow\",\"reason\":\"no_matching_rule\"}\n");
+        return 0;
+    }
+    const std::string& type = networks.front().type;
+    const std::string& id = networks.front().id;
+    int port = config.settings.http_port > 0 ? config.settings.http_port : 18765;
+    std::string appName = match->app.name.empty() ? pathBaseNameUtf8(appUtf8) : match->app.name;
+    std::string url = makeWarningUrl(port, appUtf8, appName, wideToUtf8(appArgs), type, id, match->rule.id);
+    std::string out = "{\"decision\":\"block\",\"rule_id\":\"" + match->rule.id +
+                      "\",\"network_type\":\"" + type + "\",\"url\":\"" + url + "\"}\n";
+    emit(out);
+    return 0;
+}
+
+}  // namespace
+
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+    g_exeDir = executableDir();
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    std::wstring target;
+    std::wstring argsOnly;
+    bool manual = false;
+
+    for (int i = 1; i < argc; ++i) {
+        std::wstring arg = argv[i];
+        if (arg == L"--app" && i + 1 < argc) {
+            target = argv[i + 1];
+            manual = true;
+        } else if (arg == L"--app-args" && i + 1 < argc) {
+            argsOnly = argv[i + 1];
+        }
+    }
+    if (manual) {
+        // 手动模式仅用于调试；正常由 IFEO 调用。
+    } else if (argc >= 2) {
+        target = argv[1];
+        std::wstring tail = skipFirstToken(GetCommandLineW());
+        // tail 形如 "<target>" arg1 arg2，去掉首个 target token 得到纯参数
+        argsOnly = skipFirstToken(tail.c_str());
+    }
+    bool dryRun = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::wstring(argv[i]) == L"--dry-run") { dryRun = true; break; }
+    }
+    if (dryRun) {
+        int rc = runDry(argc, argv);
+        LocalFree(argv);
+        return rc;
+    }
+    LocalFree(argv);
+
+    if (target.empty()) {
+        MessageBoxW(nullptr, L"此程序由 WiFi 提醒自动调用，请勿直接运行。", L"WiFi 提醒", MB_OK | MB_ICONINFORMATION);
+        return 2;
+    }
+    return runGuard(target, argsOnly);
 }

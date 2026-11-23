@@ -2,23 +2,17 @@
 
 #include "core/json.h"
 
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
 
 namespace ww {
 
-struct ShortcutReplacement {
-    std::string original_lnk;
-    std::string backup_lnk;
-};
-
 struct BlockedApp {
     std::string name;
     std::string original_path;
     std::string icon_path;
-    std::vector<std::string> shortcut_paths;
-    std::vector<ShortcutReplacement> replaced_shortcuts;
 };
 
 struct Rule {
@@ -51,9 +45,16 @@ struct Settings {
     std::int64_t bypass_until_epoch = 0;
 };
 
+struct NetworkState {
+    std::string last_disabled_type;
+    std::string last_disabled_name;
+    std::int64_t last_disabled_epoch = 0;
+};
+
 struct AppConfig {
-    std::string version = "1.9.0";
+    std::string version = "2.0.0";
     Settings settings;
+    NetworkState network_state;
     std::vector<AppGroup> app_groups;
     std::vector<Rule> rules;
 };
@@ -75,6 +76,7 @@ public:
     bool save(const AppConfig& config);
     AppConfig get();
     bool update(const AppConfig& config);
+    bool mutate(const std::function<void(AppConfig&)>& fn);
     std::wstring path() const;
     ConfigLoadStatus lastLoadStatus() const;
 
@@ -82,7 +84,7 @@ public:
 
 private:
     std::wstring path_;
-    mutable std::mutex mutex_;
+    mutable std::recursive_mutex mutex_;
     AppConfig cached_;
     ConfigLoadStatus last_status_;
     bool loaded_ = false;

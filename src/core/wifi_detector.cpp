@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <mutex>
 
 namespace ww {
 
@@ -142,6 +143,13 @@ static bool readFromCache(WifiStatus& status) {
 }
 
 WifiStatus getCurrentWifi() {
+    // Test/mock override must be deterministic: bypass the TTL cache entirely
+    // so successive WW_TEST_* changes take effect immediately (smoke tests).
+    if (!testSsidOverride().empty()) {
+        WifiStatus testStatus = queryWifiUncached();
+        updateCache(testStatus);
+        return testStatus;
+    }
     // Return cached result if still fresh (within TTL)
     WifiStatus cached;
     if (readFromCache(cached)) return cached;
